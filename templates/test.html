@@ -42,6 +42,14 @@
         button:hover {
             background-color: #0056b3;
         }
+        footer {
+            margin-top: 40px;
+            font-size: 0.8em;
+            text-align: center;
+            color: #666;
+        }
+        .nocowanie { color: blue; }
+        .pl { color: red; }
     </style>
 
     <script>
@@ -82,5 +90,9 @@ document.addEventListener("DOMContentLoaded", function() {
         {% endfor %}
         <button type="submit">Zakończ test</button>
     </form>
+    <footer>
+        &copy; 2024 Zespół Analiz <span class="nocowanie">Nocowanie</span><span class="pl">.pl</span><br>
+        demo v0.1
+    </footer>
 </body>
 </html>

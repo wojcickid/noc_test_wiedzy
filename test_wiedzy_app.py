@@ -1,4 +1,5 @@
 from flask import Flask, request, render_template, redirect, url_for, session
+from datetime import datetime
 import pandas as pd
 import os
 import random
@@ -7,7 +8,7 @@ app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
 # Ustawienie liczby pytań do losowania
-LICZBA_PYTAN = 5  # Możesz zmienić tę wartość przed uruchomieniem aplikacji
+LICZBA_PYTAN = 2  # Możesz zmienić tę wartość przed uruchomieniem aplikacji
 
 # Wczytanie pytań z pliku Excel i przygotowanie słownika z poprawnymi odpowiedziami
 pytania_df = pd.read_excel('pytania.xlsx')
@@ -58,6 +59,36 @@ def wynik():
 
         poprawne = sum(odpowiedzi_df["Odpowiedź Użytkownika"] == odpowiedzi_df["Prawidłowa Odpowiedź"])
         wszystkie = len(request.form)
+
+        # Liczenie poprawnych odpowiedzi
+        poprawne_odpowiedzi_liczba = sum(
+            poprawne_odpowiedzi[int(pytanie_id)] == odp for pytanie_id, odp in request.form.items() if
+            pytanie_id.isdigit())
+        wszystkie = LICZBA_PYTAN
+        procent_poprawnych = (poprawne_odpowiedzi_liczba / wszystkie) * 100
+
+        # Przygotowanie danych do zapisu
+        wyniki = {
+            "Email": [email],
+            "Poprawne odpowiedzi": [poprawne_odpowiedzi_liczba],
+            "Wszystkie pytania": [wszystkie],
+            "Procent poprawnych": [procent_poprawnych],
+            "Data wysłania": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        wyniki_df = pd.DataFrame(wyniki)
+
+        # Ścieżka do wspólnego pliku z wynikami
+        nazwa_pliku_wynikowego = os.path.join("odpowiedzi", "wyniki_testu.xlsx")
+
+        # Dodawanie wyników do istniejącego pliku lub tworzenie nowego
+        if os.path.exists(nazwa_pliku_wynikowego):
+            istniejace_wyniki_df = pd.read_excel(nazwa_pliku_wynikowego)
+            nowe_wyniki_df = pd.concat([istniejace_wyniki_df, wyniki_df], ignore_index=True)
+        else:
+            nowe_wyniki_df = wyniki_df
+
+        # Zapisanie wyników do pliku
+        nowe_wyniki_df.to_excel(nazwa_pliku_wynikowego, index=False)
 
         return render_template('wynik.html', poprawne=poprawne, wszystkie=wszystkie)
     else:
