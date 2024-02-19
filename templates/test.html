@@ -43,6 +43,30 @@
             background-color: #0056b3;
         }
     </style>
+
+    <script>
+document.addEventListener("DOMContentLoaded", function() {
+    const form = document.querySelector("form"); // Zakładając, że masz tylko jeden formularz na stronie
+    form.addEventListener("submit", function(e) {
+        const questions = document.querySelectorAll(".pytanie");
+        let allAnswered = true;
+        questions.forEach(function(question) {
+            const inputs = question.querySelectorAll("input[type=radio]");
+            const answered = Array.from(inputs).some(input => input.checked);
+            if (!answered) {
+                allAnswered = false;
+            }
+        });
+
+        if (!allAnswered) {
+            e.preventDefault(); // Zapobiega wysłaniu formularza
+            alert("Proszę odpowiedzieć na wszystkie pytania przed zakończeniem testu.");
+        }
+    });
+});
+</script>
+
+
 </head>
 <body>
     <h1>Test</h1>
@@ -50,10 +74,10 @@
         {% for pytanie in pytania %}
         <div class="pytanie">
             <p>{{ pytanie.tresc_pytania }}</p>
-            <label><input type="radio" name="odp_{{ pytanie.id }}" value="A"> {{ pytanie.opcja_a }}</label>
-            <label><input type="radio" name="odp_{{ pytanie.id }}" value="B"> {{ pytanie.opcja_b }}</label>
-            <label><input type="radio" name="odp_{{ pytanie.id }}" value="C"> {{ pytanie.opcja_c }}</label>
-            <label><input type="radio" name="odp_{{ pytanie.id }}" value="D"> {{ pytanie.opcja_d }}</label>
+            <label><input type="radio" name="{{ pytanie.id }}" value="A"> {{ pytanie.opcja_a }}</label>
+            <label><input type="radio" name="{{ pytanie.id }}" value="B"> {{ pytanie.opcja_b }}</label>
+            <label><input type="radio" name="{{ pytanie.id }}" value="C"> {{ pytanie.opcja_c }}</label>
+            <label><input type="radio" name="{{ pytanie.id }}" value="D"> {{ pytanie.opcja_d }}</label>
         </div>
         {% endfor %}
         <button type="submit">Zakończ test</button>

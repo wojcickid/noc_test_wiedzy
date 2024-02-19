@@ -69,38 +69,39 @@ def test():
 def wynik():
     if request.method == 'POST':
         odpowiedzi_uzytkownika = request.form
-        email = session.get('email')  # Pobierz email z sesji
+        email = session.get('email')
         if not email:
-            # Przekieruj z powrotem do '/', aby ponownie zebrać email
             return redirect(url_for('index'))
 
-        poprawne = 0
+        # Przygotuj DataFrame z odpowiedziami
+        dane_do_df = []
         for pytanie_id, odpowiedz_uzytkownika in odpowiedzi_uzytkownika.items():
             try:
                 pytanie_id_int = int(pytanie_id)
-                if pytanie_id_int in poprawne_odpowiedzi and poprawne_odpowiedzi[
-                    pytanie_id_int] == odpowiedz_uzytkownika:
-                    poprawne += 1
+                prawidlowa_odp = poprawne_odpowiedzi.get(pytanie_id_int, "Brak danych")
+                dane_do_df.append({
+                    "ID Pytania": pytanie_id_int,
+                    "Odpowiedź Użytkownika": odpowiedz_uzytkownika,  # Upewnij się, że ta nazwa jest spójna
+                    "Prawidłowa Odpowiedź": prawidlowa_odp
+                })
             except ValueError:
-                # Pomija nieprawidłowe ID pytania lub dodatkowe dane formularza
                 continue
 
-        wszystkie = len(odpowiedzi_uzytkownika)
+        odpowiedzi_df = pd.DataFrame(dane_do_df)
 
-        # Przygotuj DataFrame z odpowiedziami
-        odpowiedzi_df = pd.DataFrame(list(odpowiedzi_uzytkownika.items()), columns=['ID Pytania', 'Odpowiedź'])
         nazwa_pliku = os.path.join("odpowiedzi", f"wyniki_{email.replace('@', '_').replace('.', '_')}.xlsx")
 
-        # Sprawdź, czy istnieje już plik z wynikami dla tego e-maila
+        # Sprawdzenie, czy istnieje już plik z wynikami dla tego e-maila
         if os.path.exists(nazwa_pliku):
-            # Jeśli tak, wczytaj istniejący plik i dołącz nowe odpowiedzi
             istniejace_odpowiedzi_df = pd.read_excel(nazwa_pliku)
             odpowiedzi_df = pd.concat([istniejace_odpowiedzi_df, odpowiedzi_df], ignore_index=True)
 
         # Zapisz/aktualizuj plik z odpowiedziami
         odpowiedzi_df.to_excel(nazwa_pliku, index=False)
 
-        # Możesz tutaj dodać logikę do obliczenia wyniku, jeśli jest to potrzebne
+        poprawne = sum(odpowiedzi_df["Odpowiedź Użytkownika"] == odpowiedzi_df["Prawidłowa Odpowiedź"])
+        wszystkie = len(odpowiedzi_uzytkownika)
+
         return render_template('wynik.html', poprawne=poprawne, wszystkie=wszystkie)
     else:
         return redirect(url_for('test'))
