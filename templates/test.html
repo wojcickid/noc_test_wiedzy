@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<link rel="shortcut icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>Test</title>
+</head>
+<body>
+    <h1>Test</h1>
+    <form action="{{ url_for('wynik') }}" method="post">
+        {% for pytanie in pytania %}
+        <div>
+            <p>{{ pytanie.tresc_pytania }}</p>
+            <label><input type="radio" name="{{ pytanie.id }}" value="A"> {{ pytanie.opcja_a }}</label>
+            <label><input type="radio" name="{{ pytanie.id }}" value="B"> {{ pytanie.opcja_b }}</label>
+            <label><input type="radio" name="{{ pytanie.id }}" value="C"> {{ pytanie.opcja_c }}</label>
+            <label><input type="radio" name="{{ pytanie.id }}" value="D"> {{ pytanie.opcja_d }}</label>
+        </div>
+        {% endfor %}
+        <button type="submit">Zakończ test</button>
+    </form>
+</body>
+</html>
