@@ -6,6 +6,9 @@ import random
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
+# Ustawienie liczby pytań do losowania
+LICZBA_PYTAN = 5  # Możesz zmienić tę wartość przed uruchomieniem aplikacji
+
 # Wczytanie pytań z pliku Excel i przygotowanie słownika z poprawnymi odpowiedziami
 pytania_df = pd.read_excel('pytania.xlsx')
 poprawne_odpowiedzi = pd.Series(pytania_df.iloc[:, 6].values, index=pytania_df.iloc[:, 0]).to_dict()
@@ -24,13 +27,14 @@ def test():
         return redirect(url_for('index'))
 
     email = session['email']
+    print(email)
     nazwa_pliku = os.path.join("odpowiedzi", f"wyniki_{email.replace('@', '_').replace('.', '_')}.xlsx")
 
     if os.path.exists(nazwa_pliku):
         komunikat = "Już wypełniłeś ten test. Dziękujemy za udział!"
         return render_template('komunikat.html', komunikat=komunikat)
 
-    wybrane_pytania = pytania_df.sample(2)
+    wybrane_pytania = pytania_df.sample(LICZBA_PYTAN)
     pytania_do_wyswietlenia = wybrane_pytania.to_dict('records')
     return render_template('test.html', pytania=pytania_do_wyswietlenia)
 
