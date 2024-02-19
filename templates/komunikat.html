@@ -2,7 +2,7 @@
 <html lang="pl">
 <head>
     <meta charset="UTF-8">
-    <title>Wyniki Testu</title>
+    <title>Test już wypełniony</title>
     <link rel="shortcut icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
     <style>
         body {
@@ -10,13 +10,14 @@
             margin: 0 auto;
             max-width: 600px;
             padding: 20px;
-            text-align: center; /* Centruje tekst na stronie */
+            text-align: center;
         }
         h1 {
             color: #007BFF;
         }
         p {
-            margin: 20px 0; /* Dodaje marginesy dookoła paragrafów */
+            margin: 20px 0;
+            font-size: 16px;
         }
         a {
             display: inline-block;
@@ -24,28 +25,17 @@
             color: white;
             padding: 10px 20px;
             border-radius: 5px;
-            text-decoration: none; /* Usuwa podkreślenie tekstu */
+            text-decoration: none;
             margin-top: 20px;
         }
         a:hover {
             background-color: #0056b3;
         }
-        .wynik {
-            margin: 20px 0;
-            padding: 20px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            background-color: #f8f9fa; /* Lekkie tło dla kontenera wyniku */
-        }
     </style>
 </head>
 <body>
-    <h1>Wyniki Testu</h1>
-    <div class="wynik">
-        <p>Dziękujemy za wypełnienie testu! Oto Twój wynik:</p>
-        <p><strong>Poprawne odpowiedzi: {{ poprawne }}</strong></p>
-        <p><strong>Wszystkie pytania: {{ wszystkie }}</strong></p>
-    </div>
+    <h1>Komunikat</h1>
+    <p>{{ komunikat }}</p>
     <a href="/">Powrót do strony głównej</a>
 </body>
 </html>

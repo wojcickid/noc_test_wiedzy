@@ -1,20 +1,59 @@
 <!DOCTYPE html>
-<link rel="shortcut icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
 <html lang="pl">
 <head>
     <meta charset="UTF-8">
     <title>Test</title>
+    <link rel="shortcut icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0 auto;
+            max-width: 600px;
+            padding: 20px;
+        }
+        h1 {
+            color: #007BFF;
+        }
+        .pytanie {
+            margin-bottom: 20px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .pytanie p {
+            margin: 0 0 10px 0;
+            font-weight: bold;
+        }
+        .pytanie label {
+            display: block;
+            margin: 5px 0;
+        }
+        .pytanie input[type="radio"] {
+            margin-right: 5px;
+        }
+        button {
+            background-color: #007BFF;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+    </style>
 </head>
 <body>
     <h1>Test</h1>
     <form action="{{ url_for('wynik') }}" method="post">
         {% for pytanie in pytania %}
-        <div>
+        <div class="pytanie">
             <p>{{ pytanie.tresc_pytania }}</p>
-            <label><input type="radio" name="{{ pytanie.id }}" value="A"> {{ pytanie.opcja_a }}</label>
-            <label><input type="radio" name="{{ pytanie.id }}" value="B"> {{ pytanie.opcja_b }}</label>
-            <label><input type="radio" name="{{ pytanie.id }}" value="C"> {{ pytanie.opcja_c }}</label>
-            <label><input type="radio" name="{{ pytanie.id }}" value="D"> {{ pytanie.opcja_d }}</label>
+            <label><input type="radio" name="odp_{{ pytanie.id }}" value="A"> {{ pytanie.opcja_a }}</label>
+            <label><input type="radio" name="odp_{{ pytanie.id }}" value="B"> {{ pytanie.opcja_b }}</label>
+            <label><input type="radio" name="odp_{{ pytanie.id }}" value="C"> {{ pytanie.opcja_c }}</label>
+            <label><input type="radio" name="odp_{{ pytanie.id }}" value="D"> {{ pytanie.opcja_d }}</label>
         </div>
         {% endfor %}
         <button type="submit">Zakończ test</button>
