@@ -4,42 +4,7 @@
     <meta charset="UTF-8">
     <title>Test już wypełniony</title>
     <link rel="shortcut icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0 auto;
-            max-width: 600px;
-            padding: 20px;
-            text-align: center;
-        }
-        h1 {
-            color: #007BFF;
-        }
-        p {
-            margin: 20px 0;
-            font-size: 16px;
-        }
-        a {
-            display: inline-block;
-            background-color: #007BFF;
-            color: white;
-            padding: 10px 20px;
-            border-radius: 5px;
-            text-decoration: none;
-            margin-top: 20px;
-        }
-        a:hover {
-            background-color: #0056b3;
-        }
-        footer {
-            margin-top: 40px;
-            font-size: 0.8em;
-            text-align: center;
-            color: #666;
-        }
-        .nocowanie { color: blue; }
-        .pl { color: red; }
-    </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
     <h1>Komunikat</h1>

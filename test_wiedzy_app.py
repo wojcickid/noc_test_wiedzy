@@ -14,6 +14,7 @@ LICZBA_PYTAN = 2  # Możesz zmienić tę wartość przed uruchomieniem aplikacji
 pytania_df = pd.read_excel('pytania.xlsx')
 poprawne_odpowiedzi = pd.Series(pytania_df.iloc[:, 6].values, index=pytania_df.iloc[:, 0]).to_dict()
 
+
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
@@ -21,6 +22,7 @@ def index():
         session['email'] = email
         return redirect(url_for('test'))
     return render_template('index.html')
+
 
 @app.route('/test', methods=['GET', 'POST'])
 def test():
@@ -35,9 +37,15 @@ def test():
         komunikat = "Już wypełniłeś ten test. Dziękujemy za udział!"
         return render_template('komunikat.html', komunikat=komunikat)
 
-    wybrane_pytania = pytania_df.sample(LICZBA_PYTAN)
-    pytania_do_wyswietlenia = wybrane_pytania.to_dict('records')
+    if 'wybrane_pytania' not in session:
+        wybrane_pytania = pytania_df.sample(LICZBA_PYTAN).to_dict('records')
+        session['wybrane_pytania'] = wybrane_pytania
+    else:
+        wybrane_pytania = session['wybrane_pytania']
+
+    pytania_do_wyswietlenia = wybrane_pytania
     return render_template('test.html', pytania=pytania_do_wyswietlenia)
+
 
 @app.route('/wynik', methods=['POST', 'GET'])
 def wynik():
@@ -46,7 +54,9 @@ def wynik():
         if not email:
             return redirect(url_for('index'))
 
-        dane_do_df = [{"ID Pytania": int(pytanie_id), "Odpowiedź Użytkownika": odp, "Prawidłowa Odpowiedź": poprawne_odpowiedzi.get(int(pytanie_id), "Brak danych")} for pytanie_id, odp in request.form.items() if pytanie_id.isdigit()]
+        dane_do_df = [{"ID Pytania": int(pytanie_id), "Odpowiedź Użytkownika": odp,
+                       "Prawidłowa Odpowiedź": poprawne_odpowiedzi.get(int(pytanie_id), "Brak danych")} for
+                      pytanie_id, odp in request.form.items() if pytanie_id.isdigit()]
 
         odpowiedzi_df = pd.DataFrame(dane_do_df)
         nazwa_pliku = os.path.join("odpowiedzi", f"wyniki_{email.replace('@', '_').replace('.', '_')}.xlsx")
@@ -94,5 +104,6 @@ def wynik():
     else:
         return redirect(url_for('test'))
 
+
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=5555, debug=True)
