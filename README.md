@@ -1,5 +1,7 @@
 # Test wiedzy — Nocowanie.pl
 
+> Wyłącznie do użytku wewnętrznego w firmie — nie jest to narzędzie publiczne.
+
 Aplikacja Flask do przeprowadzania quizów wiedzy: uczestnicy logują się jednorazowym
 tokenem (bez podawania danych osobowych), odpowiadają na losowy zestaw pytań pokazywanych
 pojedynczo, a admin zarządza wszystkim przez wbudowany panel administracyjny.
