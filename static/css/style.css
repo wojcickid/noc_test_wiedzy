@@ -6,6 +6,13 @@ body {
     padding: 20px;
     text-align: center;
 }
+body.admin {
+    max-width: 900px;
+    text-align: left;
+}
+body.admin h1 {
+    text-align: center;
+}
 h1 {
     color: #007BFF;
 }
@@ -21,12 +28,32 @@ label {
     display: block;
     margin-top: 20px;
 }
-input[type="email"] {
+input[type="email"],
+input[type="text"],
+input[type="password"],
+input[type="number"],
+input[type="file"],
+textarea {
     width: calc(100% - 22px);
     padding: 10px;
     margin-top: 5px;
     border: 1px solid #ccc;
     border-radius: 5px;
+    font-family: inherit;
+}
+textarea {
+    font-family: monospace;
+    resize: vertical;
+}
+.postep {
+    color: #666;
+    font-weight: bold;
+}
+.bledy {
+    list-style: none;
+    padding: 0;
+    color: #c0392b;
+    font-weight: bold;
 }
 button {
     background-color: #007BFF;
@@ -61,3 +88,69 @@ footer {
 }
 .nocowanie { color: blue; }
 .pl { color: red; }
+table.szczegoly {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+    text-align: left;
+    font-size: 0.9em;
+}
+table.szczegoly th,
+table.szczegoly td {
+    border: 1px solid #ddd;
+    padding: 8px;
+    vertical-align: top;
+}
+table.szczegoly tr.ok { background-color: #e6f4ea; }
+table.szczegoly tr.zle { background-color: #fdecea; }
+.admin-nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+.admin-nav form {
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+.admin-nav a {
+    margin-top: 0;
+}
+button.wyloguj {
+    background-color: #6c757d;
+    display: inline-block;
+    margin: 0;
+    padding: 8px 16px;
+}
+button.wyloguj:hover {
+    background-color: #565e64;
+}
+.nowe-tokeny {
+    background-color: #e6f4ea;
+    border: 1px solid #b7dfc3;
+    border-radius: 5px;
+    padding: 15px;
+    margin-top: 20px;
+}
+form.przypisz {
+    display: flex;
+    gap: 6px;
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+form.przypisz input[type="text"] {
+    width: auto;
+    flex: 1;
+    margin-top: 0;
+    padding: 4px 6px;
+    font-size: 0.9em;
+}
+form.przypisz button {
+    margin: 0;
+    padding: 4px 10px;
+    font-size: 0.9em;
+}

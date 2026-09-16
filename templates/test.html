@@ -5,48 +5,30 @@
     <title>Test</title>
     <link rel="shortcut icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-
-    <script>
-document.addEventListener("DOMContentLoaded", function() {
-    const form = document.querySelector("form"); // Zakładając, że masz tylko jeden formularz na stronie
-    form.addEventListener("submit", function(e) {
-        const questions = document.querySelectorAll(".pytanie");
-        let allAnswered = true;
-        questions.forEach(function(question) {
-            const inputs = question.querySelectorAll("input[type=radio]");
-            const answered = Array.from(inputs).some(input => input.checked);
-            if (!answered) {
-                allAnswered = false;
-            }
-        });
-
-        if (!allAnswered) {
-            e.preventDefault(); // Zapobiega wysłaniu formularza
-            alert("Proszę odpowiedzieć na wszystkie pytania przed zakończeniem testu.");
-        }
-    });
-});
-</script>
-
-
 </head>
 <body>
     <h1>Test</h1>
-    <form action="{{ url_for('wynik') }}" method="post">
-        {% for pytanie in pytania %}
+    <p class="postep">Pytanie {{ numer }} z {{ liczba_pytan }}</p>
+    {% with komunikaty = get_flashed_messages() %}
+        {% if komunikaty %}
+            <ul class="bledy">
+                {% for komunikat in komunikaty %}
+                <li>{{ komunikat }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+    {% endwith %}
+    <form action="{{ url_for('test') }}" method="post">
+        <input type="hidden" name="pytanie_id" value="{{ pytanie.id }}">
         <div class="pytanie">
             <p>{{ pytanie.tresc_pytania }}</p>
-            <label><input type="radio" name="{{ pytanie.id }}" value="A"> {{ pytanie.opcja_a }}</label>
-            <label><input type="radio" name="{{ pytanie.id }}" value="B"> {{ pytanie.opcja_b }}</label>
-            <label><input type="radio" name="{{ pytanie.id }}" value="C"> {{ pytanie.opcja_c }}</label>
-       <!-- <label><input type="radio" name="{{ pytanie.id }}" value="D"> {{ pytanie.opcja_d }}</label> -->
+            <label><input type="radio" name="odpowiedz" value="A" required> {{ pytanie.opcja_a }}</label>
+            <label><input type="radio" name="odpowiedz" value="B"> {{ pytanie.opcja_b }}</label>
+            <label><input type="radio" name="odpowiedz" value="C"> {{ pytanie.opcja_c }}</label>
+            <label><input type="radio" name="odpowiedz" value="D"> {{ pytanie.opcja_d }}</label>
         </div>
-        {% endfor %}
-        <button type="submit">Zakończ test</button>
+        <button type="submit">{% if numer == liczba_pytan %}Zakończ test{% else %}Dalej{% endif %}</button>
     </form>
-    <footer>
-        &copy; 2024 Zespół Analiz <span class="nocowanie">Nocowanie</span><span class="pl">.pl</span><br>
-        demo v0.1
-    </footer>
+    {% include "stopka.html" %}
 </body>
 </html>

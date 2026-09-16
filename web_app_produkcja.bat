@@ -22,7 +22,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo Uruchamianie aplikacji Flask...
-"%VENV_PY%" "%~dp0test_wiedzy_app.py"
+echo Uruchamianie aplikacji (serwer produkcyjny waitress)...
+"%VENV_PY%" "%~dp0serwer_produkcyjny.py"
 
 pause

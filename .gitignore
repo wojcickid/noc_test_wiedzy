@@ -1,2 +1,12 @@
 .idea/
 *.pyc
+__pycache__/
+.venv/
+odpowiedzi/
+flask_session/
+.flask_secret_key
+.admin_haslo
+baza.db
+baza.db-wal
+baza.db-shm
+*.xlsx

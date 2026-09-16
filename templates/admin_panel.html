@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>Panel administracyjny</title>
+    <link rel="shortcut icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="admin">
+    <nav class="admin-nav">
+        <a href="{{ url_for('admin_import') }}">+ Nowy test</a>
+        <form action="{{ url_for('admin_logout') }}" method="post">
+            <button type="submit" class="wyloguj">Wyloguj</button>
+        </form>
+    </nav>
+    <h1>Panel administracyjny</h1>
+    {% with komunikaty = get_flashed_messages() %}
+        {% if komunikaty %}
+            <ul class="bledy">
+                {% for komunikat in komunikaty %}
+                <li>{{ komunikat }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+    {% endwith %}
+
+    {% if testy %}
+    <table class="szczegoly">
+        <thead>
+            <tr>
+                <th>Test</th>
+                <th>Pytania</th>
+                <th>Losowanych</th>
+                <th>Tokeny (wykorzystane/wszystkie)</th>
+                <th>Zaimportowano</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for test in testy %}
+            <tr>
+                <td><a href="{{ url_for('admin_test', test_id=test.id) }}">{{ test.nazwa }}</a></td>
+                <td>{{ test.liczba_pytan }}</td>
+                <td>{{ test.liczba_pytan_do_losowania }}</td>
+                <td>{{ test.liczba_wykorzystanych }} / {{ test.liczba_tokenow }}</td>
+                <td>{{ test.data_importu }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>Brak zaimportowanych testów. Zacznij od importu pytań.</p>
+    {% endif %}
+
+    <a href="{{ url_for('admin_import') }}">Zaimportuj nowy test z pliku .xlsx</a>
+    {% include "stopka.html" %}
+</body>
+</html>

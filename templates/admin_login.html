@@ -2,12 +2,12 @@
 <html lang="pl">
 <head>
     <meta charset="UTF-8">
-    <title>Test wiedzy Nocowanie.pl</title>
+    <title>Panel administracyjny — logowanie</title>
     <link rel="shortcut icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
-<body>
-    <h1>Witamy w teście wiedzy!</h1>
+<body class="admin">
+    <h1>Panel administracyjny</h1>
     {% with komunikaty = get_flashed_messages() %}
         {% if komunikaty %}
             <ul class="bledy">
@@ -17,12 +17,11 @@
             </ul>
         {% endif %}
     {% endwith %}
-    <form action="/" method="post">
-        <label for="token">Podaj swój token dostępu:</label>
-        <input type="text" id="token" name="token" required autocomplete="off" autocapitalize="characters">
-        <button type="submit">Rozpocznij test</button>
+    <form action="{{ url_for('admin_login', nastepny=request.args.get('nastepny')) }}" method="post">
+        <label for="haslo">Hasło administratora:</label>
+        <input type="password" id="haslo" name="haslo" required autocomplete="current-password">
+        <button type="submit">Zaloguj</button>
     </form>
-    <a href="{{ url_for('sprawdz_wynik') }}">Sprawdź swój wynik</a>
     {% include "stopka.html" %}
 </body>
 </html>
