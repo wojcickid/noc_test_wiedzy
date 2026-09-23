@@ -148,6 +148,9 @@ def test_wyjasnienie_jest_zapisywane_i_pokazywane_w_wyniku_uczestnika(klient):
         },
     ]
     test_id, _, _ = db.importuj_pytania("Test z wyjasnieniem", wiersze, liczba_pytan=1)
+    # Szczegóły są domyślnie widoczne dopiero po zamknięciu testu (F2) — ten test
+    # sprawdza samą treść wyjaśnienia, więc włączamy widoczność „od razu”.
+    db.zapisz_ustawienia_testu(test_id, None, "natychmiast", None, "od_razu", None, None)
     (token,) = [w["token"] for w in db.wygeneruj_tokeny(test_id, 1, dlugosc=6)]
 
     wynik = przejdz_caly_test(klient, token, litera_odpowiedzi="B")

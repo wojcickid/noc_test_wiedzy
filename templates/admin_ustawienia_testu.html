@@ -1,0 +1,55 @@
+{% set klasa_body = "admin" %}
+{% extends "base.html" %}
+{% block tytul %}Ustawienia — {{ test.nazwa }}{% endblock %}
+{% block nav %}
+<nav class="admin-nav">
+    <a href="{{ url_for('admin_test', test_id=test.id) }}">← {{ test.nazwa }}</a>
+    <form action="{{ url_for('admin_logout') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="wyloguj">Wyloguj</button>
+    </form>
+</nav>
+{% endblock %}
+{% block naglowek %}Ustawienia — {{ test.nazwa }}{% endblock %}
+{% block tresc %}
+{% include "_komunikaty.html" %}
+<form action="{{ url_for('admin_ustawienia_testu', test_id=test.id) }}" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <label for="liczba_pytan_do_losowania">Liczba losowanych pytań na podejście (pytań w banku: {{ liczba_pytan_w_banku }}):</label>
+    <input type="number" id="liczba_pytan_do_losowania" name="liczba_pytan_do_losowania" min="1" max="{{ liczba_pytan_w_banku }}" value="{{ test.liczba_pytan_do_losowania }}">
+
+    <label for="limit_czasu_min">Limit czasu na test (w minutach — puste pole = brak limitu):</label>
+    <input type="number" id="limit_czasu_min" name="limit_czasu_min" min="1" value="{{ test.limit_czasu_min or '' }}">
+
+    <label for="wynik_widoczny">Widoczność wyniku punktowego dla uczestnika:</label>
+    <select id="wynik_widoczny" name="wynik_widoczny">
+        <option value="od_razu" {% if test.wynik_widoczny == "od_razu" %}selected{% endif %}>Od razu po teście</option>
+        <option value="razem_ze_szczegolami" {% if test.wynik_widoczny == "razem_ze_szczegolami" %}selected{% endif %}>Razem ze szczegółami (wg reguły poniżej)</option>
+    </select>
+
+    <label for="tryb_szczegolow">Widoczność szczegółowych odpowiedzi dla uczestnika:</label>
+    <select id="tryb_szczegolow" name="tryb_szczegolow">
+        <option value="natychmiast" {% if test.tryb_szczegolow == "natychmiast" %}selected{% endif %}>Od razu po teście</option>
+        <option value="po_zamknieciu" {% if test.tryb_szczegolow == "po_zamknieciu" %}selected{% endif %}>Po zamknięciu testu przez prowadzącego</option>
+        <option value="od_daty" {% if test.tryb_szczegolow == "od_daty" %}selected{% endif %}>Od podanej daty</option>
+        <option value="nigdy" {% if test.tryb_szczegolow == "nigdy" %}selected{% endif %}>Nigdy (tylko prowadzący widzi szczegóły)</option>
+    </select>
+
+    <label for="szczegoly_od">Data udostępnienia szczegółów (tylko dla trybu „Od podanej daty”):</label>
+    <input type="datetime-local" id="szczegoly_od" name="szczegoly_od" value="{{ szczegoly_od_local }}">
+
+    <label for="dostepny_od">Test dostępny (start) od (opcjonalnie):</label>
+    <input type="datetime-local" id="dostepny_od" name="dostepny_od" value="{{ dostepny_od_local }}">
+
+    <label for="dostepny_do">Test dostępny (start) do (opcjonalnie):</label>
+    <input type="datetime-local" id="dostepny_do" name="dostepny_do" value="{{ dostepny_do_local }}">
+
+    <label>
+        <input type="checkbox" name="zamkniety" {% if test.zamkniety %}checked{% endif %} style="width: auto; display: inline;">
+        Zamknij test i opublikuj odpowiedzi (blokuje nowe podejścia, odblokowuje szczegóły w trybie „Po zamknięciu”)
+    </label>
+
+    <button type="submit">Zapisz ustawienia</button>
+</form>
+{% endblock %}

@@ -3,9 +3,17 @@
 {% block naglowek %}Wyniki Testu{% endblock %}
 {% block tresc %}
 <div class="wynik">
-    <p>Dziękujemy za wypełnienie testu! Oto Twój wynik:</p>
-    <p><strong>Poprawne odpowiedzi: {{ poprawne }}</strong></p>
-    <p><strong>Wszystkie pytania: {{ wszystkie }}</strong></p>
+    {% if czas_minal %}
+    <p>Czas na wypełnienie testu minął — test został zakończony automatycznie.</p>
+    {% else %}
+    <p>Dziękujemy za wypełnienie testu!</p>
+    {% endif %}
+    {% if pokaz_wynik %}
+    <p><strong>Poprawne odpowiedzi: {{ poprawne }} / {{ wszystkie }} ({{ procent }}%)</strong></p>
+    {% else %}
+    <p>{{ komunikat_wynik }}</p>
+    <p>Wynik będzie można sprawdzić później na stronie <a href="{{ url_for('sprawdz_wynik') }}">Sprawdź swój wynik</a>, podając swój token.</p>
+    {% endif %}
 </div>
 <a class="btn" href="/">Powrót do strony głównej</a>
 {% endblock %}

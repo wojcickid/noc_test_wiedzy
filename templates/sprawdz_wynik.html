@@ -12,8 +12,13 @@
 </form>
 {% else %}
 <div class="wynik">
-    <p><strong>Wynik: {{ poprawne }} / {{ wszystkie }}</strong></p>
+    {% if pokaz_wynik %}
+    <p><strong>Wynik: {{ poprawne }} / {{ wszystkie }} ({{ procent }}%)</strong></p>
+    {% else %}
+    <p>{{ komunikat_wynik }}</p>
+    {% endif %}
 </div>
+{% if pokaz_szczegoly %}
 <table class="szczegoly">
     <thead>
         <tr>
@@ -34,6 +39,9 @@
         {% endfor %}
     </tbody>
 </table>
+{% else %}
+<p>{{ komunikat_szczegoly }}</p>
+{% endif %}
 {% endif %}
 
 <a class="btn" href="{{ url_for('index') }}">Powrót do strony głównej</a>

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block tytul %}{{ test.nazwa }} — start{% endblock %}
+{% block naglowek %}{{ test.nazwa }}{% endblock %}
+{% block tresc %}
+{% include "_komunikaty.html" %}
+<div class="zasady">
+    <ul>
+        <li>Test zawiera pytania jednokrotnego wyboru — na każde pytanie jest tylko jedna poprawna odpowiedź.</li>
+        <li>Po przejściu dalej nie można wrócić do poprzedniego pytania.</li>
+        {% if test.limit_czasu_min %}
+        <li>Masz na test <strong>{{ test.limit_czasu_min }} minut</strong> — licznik zacznie się liczyć od kliknięcia „Rozpoczynam” i będzie widoczny przy każdym pytaniu. Po upływie czasu test zakończy się automatycznie.</li>
+        {% else %}
+        <li>Ten test nie ma limitu czasu.</li>
+        {% endif %}
+        <li>Możesz przerwać i wrócić później tym samym tokenem — Twój postęp jest zapisywany na bieżąco.</li>
+    </ul>
+</div>
+<form action="{{ url_for('test') }}" method="post">
+    <input type="hidden" name="start" value="1">
+    <button type="submit">Rozpoczynam</button>
+</form>
+{% endblock %}

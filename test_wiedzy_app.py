@@ -4,7 +4,7 @@ import io
 import json
 import os
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 
 import openpyxl
@@ -12,14 +12,22 @@ from flask import Flask, abort, flash, redirect, render_template, request, send_
 
 from db import (
     BladImportu,
+    FORMAT_DATY,
+    TOLERANCJA_SEKUNDY,
+    TRYBY_SZCZEGOLOW,
+    TRYBY_WYNIKU,
     baza,
+    domknij_przeterminowane_podejscia,
     importuj_pytania,
     inicjalizuj,
     losowy_kod,
+    oblicz_termin,
     przypisz_token,
     resetuj_token,
+    ustaw_zamkniecie_testu,
     wczytaj_i_zwaliduj_plik_pytan,
     wygeneruj_tokeny,
+    zapisz_ustawienia_testu,
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -122,19 +130,53 @@ def csrf_chroniony(f):
     return opakowana
 
 
+def okno_dostepnosci_ok(test, teraz):
+    """Sprawdza okno dostępności testu (F2, punkt 5) — `dostepny_od`/`dostepny_do`
+    dotyczą wyłącznie startu nowego podejścia, nie trwającego już testu."""
+    if test["dostepny_od"] and teraz < datetime.strptime(test["dostepny_od"], FORMAT_DATY):
+        return False, f"Ten test będzie dostępny od {sformatuj_date_pl(test['dostepny_od'])}."
+    if test["dostepny_do"] and teraz > datetime.strptime(test["dostepny_do"], FORMAT_DATY):
+        return False, "Termin na rozpoczęcie tego testu już minął."
+    return True, None
+
+
+def sformatuj_date_pl(wartosc):
+    """Format daty do wyświetlania uczestnikom/adminowi (Etap 4, decyzja o
+    formacie DD.MM.RRRR GG:MM, strefa Europe/Warsaw — czas serwera)."""
+    if not wartosc:
+        return ""
+    try:
+        return datetime.strptime(wartosc, FORMAT_DATY).strftime("%d.%m.%Y %H:%M")
+    except ValueError:
+        return wartosc
+
+
 def rozpocznij_lub_wznow_podejscie(token):
     """Zwraca id testu, do którego token daje dostęp — jeśli można rozpocząć
     nowe podejście albo wznowić trwające (B1, E13) — albo None, jeśli token
-    nie istnieje albo podejście jest już zakończone/unieważnione.
+    nie istnieje, podejście jest już zakończone/unieważnione, albo (dla
+    nowego podejścia) test jest zamknięty lub poza oknem dostępności (F2).
 
     Pierwsze wejście atomowo oznacza token jako wykorzystany i losuje pytania
     podejścia (UPDATE...WHERE wykorzystany=0, jak dawniej w
     waliduj_i_zuzyj_token) — gwarantuje to w SQLite, że dwa równoczesne
     wejścia tym samym tokenem (podwójne kliknięcie „Rozpocznij”, B9) nie
     wylosują dwóch różnych zestawów pytań: przegrany wyścig po prostu
-    dołącza do podejścia utworzonego przez zwycięzcę."""
+    dołącza do podejścia utworzonego przez zwycięzcę.
+
+    Zegar (F1) startuje dopiero tutaj — czyli dopiero po kliknięciu
+    „Rozpoczynam” na ekranie startowym (E14), nie przy samym wpisaniu tokenu."""
     with baza() as conn:
-        token_wiersz = conn.execute("SELECT test_id FROM tokeny WHERE token = ?", (token,)).fetchone()
+        token_wiersz = conn.execute(
+            """
+            SELECT tk.test_id AS test_id, t.zamkniety AS zamkniety,
+                   t.dostepny_od AS dostepny_od, t.dostepny_do AS dostepny_do,
+                   t.liczba_pytan_do_losowania AS liczba_pytan_do_losowania
+            FROM tokeny tk JOIN testy t ON t.id = tk.test_id
+            WHERE tk.token = ?
+            """,
+            (token,),
+        ).fetchone()
         if token_wiersz is None:
             return None
         test_id = token_wiersz["test_id"]
@@ -142,6 +184,12 @@ def rozpocznij_lub_wznow_podejscie(token):
         podejscie = conn.execute("SELECT status FROM podejscia WHERE token = ?", (token,)).fetchone()
         if podejscie is not None:
             return test_id if podejscie["status"] == "w_trakcie" else None
+
+        if token_wiersz["zamkniety"]:
+            return None
+        ok, _ = okno_dostepnosci_ok(token_wiersz, datetime.now())
+        if not ok:
+            return None
 
         teraz = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         cur = conn.execute(
@@ -152,10 +200,7 @@ def rozpocznij_lub_wznow_podejscie(token):
             podejscie = conn.execute("SELECT status FROM podejscia WHERE token = ?", (token,)).fetchone()
             return test_id if podejscie is not None and podejscie["status"] == "w_trakcie" else None
 
-        test_wiersz = conn.execute(
-            "SELECT liczba_pytan_do_losowania FROM testy WHERE id = ?", (test_id,)
-        ).fetchone()
-        liczba_pytan = test_wiersz["liczba_pytan_do_losowania"] if test_wiersz else 20
+        liczba_pytan = token_wiersz["liczba_pytan_do_losowania"] or 20
         wiersze = conn.execute(
             "SELECT id FROM pytania WHERE test_id = ? ORDER BY RANDOM() LIMIT ?",
             (test_id, liczba_pytan),
@@ -172,7 +217,88 @@ def rozpocznij_lub_wznow_podejscie(token):
     return test_id
 
 
+def waliduj_token_startu(token):
+    """Sprawdzenie tokenu na stronie głównej (bez efektów ubocznych) — token
+    musi istnieć; jeśli podejście już trwa, wznowienie jest zawsze możliwe;
+    jeśli podejście jeszcze nie istnieje, test nie może być zamknięty ani poza
+    oknem dostępności (F2). Zwraca (test_id, None) albo (None, komunikat)."""
+    with baza() as conn:
+        wiersz = conn.execute(
+            """
+            SELECT tk.test_id AS test_id, t.zamkniety AS zamkniety,
+                   t.dostepny_od AS dostepny_od, t.dostepny_do AS dostepny_do
+            FROM tokeny tk JOIN testy t ON t.id = tk.test_id
+            WHERE tk.token = ?
+            """,
+            (token,),
+        ).fetchone()
+        if wiersz is None:
+            return None, "Nieprawidłowy token dostępu."
+
+        podejscie = conn.execute("SELECT status FROM podejscia WHERE token = ?", (token,)).fetchone()
+        if podejscie is not None:
+            if podejscie["status"] == "w_trakcie":
+                return wiersz["test_id"], None
+            return None, "Ten token został już wykorzystany."
+
+        if wiersz["zamkniety"]:
+            return None, "Ten test został zamknięty przez prowadzącego."
+        ok, komunikat = okno_dostepnosci_ok(wiersz, datetime.now())
+        if not ok:
+            return None, komunikat
+
+    return wiersz["test_id"], None
+
+
+def szczegoly_dostepne(test, teraz):
+    """Czy uczestnik może teraz zobaczyć szczegółowe odpowiedzi (F2)."""
+    tryb = test["tryb_szczegolow"]
+    if tryb == "natychmiast":
+        return True, None
+    if tryb == "po_zamknieciu":
+        if test["zamkniety"]:
+            return True, None
+        return False, "Szczegółowe odpowiedzi będą dostępne po zakończeniu testu przez prowadzącego."
+    if tryb == "od_daty":
+        if test["szczegoly_od"] and teraz >= datetime.strptime(test["szczegoly_od"], FORMAT_DATY):
+            return True, None
+        if test["szczegoly_od"]:
+            return False, f"Szczegółowe odpowiedzi będą dostępne od {sformatuj_date_pl(test['szczegoly_od'])}."
+        return False, "Szczegółowe odpowiedzi nie są jeszcze dostępne."
+    return False, "Szczegółowe odpowiedzi są dostępne tylko dla prowadzącego."
+
+
+def wynik_dostepny(test, teraz):
+    """Czy uczestnik może teraz zobaczyć wynik punktowy (F2) — w trybie
+    „razem ze szczegółami” korzysta z tej samej reguły co szczegoly_dostepne."""
+    if test["wynik_widoczny"] == "od_razu":
+        return True, None
+    return szczegoly_dostepne(test, teraz)
+
+
+def _zamknij_podejscie_z_powodu_czasu(conn, token):
+    teraz_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute(
+        "UPDATE podejscia SET status = 'czas_minal', data_zakonczenia = ? WHERE token = ? AND status = 'w_trakcie'",
+        (teraz_str, token),
+    )
+
+
+def sprawdz_i_domknij_jesli_czas_minal(conn, token, podejscie, test):
+    """Sprawdza limit czasu (+ tolerancja) dla pojedynczego podejścia w_trakcie
+    w ramach już otwartego połączenia — używane w /test i /wynik, żeby
+    odpowiedź spóźniona ponad tolerancję nigdy nie została zapisana (F1)."""
+    if test["limit_czasu_min"] is None:
+        return False
+    termin = oblicz_termin(podejscie["data_rozpoczecia"], test["limit_czasu_min"]) + timedelta(seconds=TOLERANCJA_SEKUNDY)
+    if datetime.now() <= termin:
+        return False
+    _zamknij_podejscie_z_powodu_czasu(conn, token)
+    return True
+
+
 app.jinja_env.globals["csrf_token"] = generuj_csrf_token
+app.jinja_env.filters["data_pl"] = sformatuj_date_pl
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -183,14 +309,16 @@ def index():
             flash("Podaj token dostępu.", "blad")
             return redirect(url_for("index"))
 
-        test_id = rozpocznij_lub_wznow_podejscie(token)
+        test_id, blad = waliduj_token_startu(token)
         if test_id is None:
-            flash("Nieprawidłowy lub już wykorzystany token dostępu.", "blad")
+            flash(blad or "Nieprawidłowy lub już wykorzystany token dostępu.", "blad")
             return redirect(url_for("index"))
 
         # W sesji (ciasteczku) trzymamy wyłącznie sam token — postęp i pytania
         # są w bazie (L1), więc ten sam token wznawia test na dowolnym
         # urządzeniu, wystarczy go ponownie wpisać na stronie głównej (E13).
+        # Sam wpisanie tokenu jeszcze NIE uruchamia zegara (E14) — to robi
+        # dopiero kliknięcie „Rozpoczynam” na ekranie startowym w /test.
         session["token"] = token
         return redirect(url_for("test"))
     return render_template("index.html")
@@ -203,11 +331,43 @@ def test():
         return redirect(url_for("index"))
 
     with baza() as conn:
+        test_wiersz = conn.execute(
+            "SELECT t.* FROM tokeny tk JOIN testy t ON t.id = tk.test_id WHERE tk.token = ?", (token,)
+        ).fetchone()
+        if test_wiersz is None:
+            session.pop("token", None)
+            return redirect(url_for("index"))
+        test_dict = dict(test_wiersz)
         podejscie = conn.execute("SELECT * FROM podejscia WHERE token = ?", (token,)).fetchone()
 
-    if podejscie is None or podejscie["status"] != "w_trakcie":
-        session.pop("token", None)
-        return redirect(url_for("index"))
+    if request.method == "POST" and request.form.get("start"):
+        nowy_test_id = rozpocznij_lub_wznow_podejscie(token)
+        if nowy_test_id is None:
+            flash("Nie udało się rozpocząć testu — token jest nieprawidłowy, już wykorzystany albo test jest niedostępny.", "blad")
+            session.pop("token", None)
+            return redirect(url_for("index"))
+        return redirect(url_for("test"))
+
+    if podejscie is None:
+        # Ekran startowy (E14) — zegar limitu czasu (F1) startuje dopiero po
+        # kliknięciu „Rozpoczynam” (obsłużone wyżej), nie przy samym wejściu tu.
+        if test_dict["zamkniety"]:
+            session.pop("token", None)
+            flash("Ten test został zamknięty przez prowadzącego.", "blad")
+            return redirect(url_for("index"))
+        ok, komunikat = okno_dostepnosci_ok(test_dict, datetime.now())
+        if not ok:
+            session.pop("token", None)
+            flash(komunikat, "blad")
+            return redirect(url_for("index"))
+        return render_template("start.html", test=test_dict)
+
+    if podejscie["status"] != "w_trakcie":
+        return redirect(url_for("wynik"))
+
+    with baza() as conn:
+        if sprawdz_i_domknij_jesli_czas_minal(conn, token, podejscie, test_dict):
+            return redirect(url_for("wynik"))
 
     wybrane_pytania_id = json.loads(podejscie["wybrane_pytania"])
     if not wybrane_pytania_id:
@@ -231,6 +391,18 @@ def test():
             return redirect(url_for("test"))
 
         if not odpowiedz or odpowiedz not in {"A", "B", "C", "D"}:
+            # Licznik (F1) wysyła formularz automatycznie po upływie czasu, nawet
+            # bez zaznaczonej odpowiedzi — bez tego uczestnik dostawałby "Zaznacz
+            # odpowiedź" i wracał na stronę pytania, gdzie licznik od razu znowu
+            # wysyłałby pusty formularz w kółko, aż do końca 5-sekundowej tolerancji.
+            limit_minal = (
+                test_dict["limit_czasu_min"] is not None
+                and datetime.now() >= oblicz_termin(podejscie["data_rozpoczecia"], test_dict["limit_czasu_min"])
+            )
+            if limit_minal:
+                with baza() as conn:
+                    _zamknij_podejscie_z_powodu_czasu(conn, token)
+                return redirect(url_for("wynik"))
             flash("Zaznacz odpowiedź, aby przejść dalej.", "blad")
             return redirect(url_for("test"))
 
@@ -264,11 +436,18 @@ def test():
         ).fetchone()
     pytanie = dict(wiersz)
 
+    pozostalo_s = None
+    if test_dict["limit_czasu_min"] is not None:
+        termin = oblicz_termin(podejscie["data_rozpoczecia"], test_dict["limit_czasu_min"])
+        pozostalo_s = max(0, int((termin - datetime.now()).total_seconds()))
+
     return render_template(
         "test.html",
         pytanie=pytanie,
         numer=indeks + 1,
         liczba_pytan=len(wybrane_pytania_id),
+        test_nazwa=test_dict["nazwa"],
+        pozostalo_s=pozostalo_s,
     )
 
 
@@ -279,21 +458,30 @@ def wynik():
         return redirect(url_for("index"))
 
     with baza() as conn:
+        test_wiersz = conn.execute(
+            "SELECT t.* FROM tokeny tk JOIN testy t ON t.id = tk.test_id WHERE tk.token = ?", (token,)
+        ).fetchone()
         podejscie = conn.execute("SELECT * FROM podejscia WHERE token = ?", (token,)).fetchone()
-        if podejscie is None:
+        if test_wiersz is None or podejscie is None:
             session.pop("token", None)
             return redirect(url_for("index"))
+        test_dict = dict(test_wiersz)
 
         wybrane_pytania_id = json.loads(podejscie["wybrane_pytania"])
-        if podejscie["indeks_pytania"] < len(wybrane_pytania_id):
-            return redirect(url_for("test"))
+        status = podejscie["status"]
 
-        if podejscie["status"] != "zakonczone":
-            teraz = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            conn.execute(
-                "UPDATE podejscia SET status = 'zakonczone', data_zakonczenia = ? WHERE token = ? AND status = 'w_trakcie'",
-                (teraz, token),
-            )
+        if status == "w_trakcie":
+            if sprawdz_i_domknij_jesli_czas_minal(conn, token, podejscie, test_dict):
+                status = "czas_minal"
+            elif podejscie["indeks_pytania"] < len(wybrane_pytania_id):
+                return redirect(url_for("test"))
+            else:
+                teraz = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                conn.execute(
+                    "UPDATE podejscia SET status = 'zakonczone', data_zakonczenia = ? WHERE token = ? AND status = 'w_trakcie'",
+                    (teraz, token),
+                )
+                status = "zakonczone"
 
         wiersze = conn.execute(
             """
@@ -309,10 +497,22 @@ def wynik():
     # Mianownik to liczba wylosowanych pytań podejścia, nie COUNT() udzielonych
     # odpowiedzi (L3) — dla normalnie ukończonego testu te liczby są równe.
     wszystkie = len(wybrane_pytania_id)
+    procent = round(100 * poprawne / wszystkie, 1) if wszystkie else 0
 
     session.pop("token", None)
 
-    return render_template("wynik.html", poprawne=poprawne, wszystkie=wszystkie)
+    teraz = datetime.now()
+    pokaz_wynik, komunikat_wynik = wynik_dostepny(test_dict, teraz)
+
+    return render_template(
+        "wynik.html",
+        poprawne=poprawne,
+        wszystkie=wszystkie,
+        procent=procent,
+        pokaz_wynik=pokaz_wynik,
+        komunikat_wynik=komunikat_wynik,
+        czas_minal=(status == "czas_minal"),
+    )
 
 
 @app.route("/sprawdz-wynik", methods=["GET", "POST"])
@@ -323,24 +523,41 @@ def sprawdz_wynik():
             flash("Podaj token.", "blad")
             return redirect(url_for("sprawdz_wynik"))
 
+        domknij_przeterminowane_podejscia()
+
         with baza() as conn:
+            test_wiersz = conn.execute(
+                "SELECT t.* FROM tokeny tk JOIN testy t ON t.id = tk.test_id WHERE tk.token = ?", (token,)
+            ).fetchone()
             wiersze = conn.execute(
                 "SELECT * FROM arkusz_wynikow WHERE token = ?",
                 (token,),
             ).fetchall()
 
-        if not wiersze:
+        if not wiersze or test_wiersz is None:
             flash("Nie znaleziono wyników dla podanego tokenu — test mógł nie zostać jeszcze ukończony.", "info")
             return redirect(url_for("sprawdz_wynik"))
 
+        test_dict = dict(test_wiersz)
+        teraz = datetime.now()
+        pokaz_wynik, komunikat_wynik = wynik_dostepny(test_dict, teraz)
+        pokaz_szczegoly, komunikat_szczegoly = szczegoly_dostepne(test_dict, teraz)
+
         szczegoly = [dict(w) for w in wiersze]
         poprawne = sum(1 for w in szczegoly if w["odpowiedz_uzytkownika"] == w["poprawna_odpowiedz"])
+        wszystkie = len(szczegoly)
+        procent = round(100 * poprawne / wszystkie, 1) if wszystkie else 0
         return render_template(
             "sprawdz_wynik.html",
             pokaz_formularz=False,
-            szczegoly=szczegoly,
+            szczegoly=szczegoly if pokaz_szczegoly else None,
             poprawne=poprawne,
-            wszystkie=len(szczegoly),
+            wszystkie=wszystkie,
+            procent=procent,
+            pokaz_wynik=pokaz_wynik,
+            komunikat_wynik=komunikat_wynik,
+            pokaz_szczegoly=pokaz_szczegoly,
+            komunikat_szczegoly=komunikat_szczegoly,
         )
     return render_template("sprawdz_wynik.html", pokaz_formularz=True)
 
@@ -503,6 +720,7 @@ def admin_szablon():
 @app.route("/admin/testy/<int:test_id>")
 @wymaga_admina
 def admin_test(test_id):
+    domknij_przeterminowane_podejscia(test_id)
     with baza() as conn:
         test = conn.execute("SELECT * FROM testy WHERE id = ?", (test_id,)).fetchone()
         if test is None:
@@ -526,6 +744,7 @@ def admin_test(test_id):
 @wymaga_admina
 @csrf_chroniony
 def admin_tokeny(test_id):
+    domknij_przeterminowane_podejscia(test_id)
     with baza() as conn:
         test = conn.execute("SELECT * FROM testy WHERE id = ?", (test_id,)).fetchone()
     if test is None:
@@ -596,6 +815,101 @@ def admin_tokeny(test_id):
         test=dict(test),
         tokeny=[dict(t) for t in tokeny],
         nowe_tokeny=nowe_tokeny,
+    )
+
+
+def datetime_local_na_storage(wartosc):
+    """Konwersja z formatu pola <input type="datetime-local"> (bez sekund) do
+    formatu przechowywanego w bazie. Puste/nieprawidłowe wejście daje None."""
+    if not wartosc:
+        return None
+    try:
+        return datetime.strptime(wartosc, "%Y-%m-%dT%H:%M").strftime(FORMAT_DATY)
+    except ValueError:
+        return None
+
+
+def storage_na_datetime_local(wartosc):
+    """Odwrotność datetime_local_na_storage — do wstępnego wypełnienia formularza."""
+    if not wartosc:
+        return ""
+    try:
+        return datetime.strptime(wartosc, FORMAT_DATY).strftime("%Y-%m-%dT%H:%M")
+    except ValueError:
+        return ""
+
+
+@app.route("/admin/testy/<int:test_id>/ustawienia", methods=["GET", "POST"])
+@wymaga_admina
+@csrf_chroniony
+def admin_ustawienia_testu(test_id):
+    with baza() as conn:
+        test = conn.execute("SELECT * FROM testy WHERE id = ?", (test_id,)).fetchone()
+        liczba_pytan_w_banku = conn.execute(
+            "SELECT COUNT(*) AS c FROM pytania WHERE test_id = ?", (test_id,)
+        ).fetchone()["c"]
+    if test is None:
+        flash("Nie znaleziono testu.", "blad")
+        return redirect(url_for("admin_panel"))
+
+    if request.method == "POST":
+        liczba_pytan_tekst = (request.form.get("liczba_pytan_do_losowania") or "").strip()
+        if liczba_pytan_tekst:
+            try:
+                liczba_pytan_do_losowania = int(liczba_pytan_tekst)
+                if liczba_pytan_do_losowania < 1:
+                    raise ValueError
+            except ValueError:
+                flash("Liczba losowanych pytań musi być dodatnią liczbą.", "blad")
+                return redirect(url_for("admin_ustawienia_testu", test_id=test_id))
+            if liczba_pytan_do_losowania > liczba_pytan_w_banku:
+                flash(
+                    f"Uwaga: w banku jest tylko {liczba_pytan_w_banku} pytań, więc losowanie ustawiono na tyle "
+                    f"(zamiast żądanych {liczba_pytan_do_losowania}).",
+                    "info",
+                )
+                liczba_pytan_do_losowania = liczba_pytan_w_banku
+        else:
+            liczba_pytan_do_losowania = None
+
+        limit_tekst = (request.form.get("limit_czasu_min") or "").strip()
+        limit_czasu_min = None
+        if limit_tekst:
+            try:
+                limit_czasu_min = int(limit_tekst)
+                if limit_czasu_min < 1:
+                    raise ValueError
+            except ValueError:
+                flash("Limit czasu musi być dodatnią liczbą minut (albo puste pole — brak limitu).", "blad")
+                return redirect(url_for("admin_ustawienia_testu", test_id=test_id))
+
+        tryb_szczegolow = request.form.get("tryb_szczegolow", "po_zamknieciu")
+        wynik_widoczny = request.form.get("wynik_widoczny", "od_razu")
+        if tryb_szczegolow not in TRYBY_SZCZEGOLOW or wynik_widoczny not in TRYBY_WYNIKU:
+            flash("Nieprawidłowe ustawienia widoczności.", "blad")
+            return redirect(url_for("admin_ustawienia_testu", test_id=test_id))
+
+        szczegoly_od = datetime_local_na_storage(request.form.get("szczegoly_od"))
+        dostepny_od = datetime_local_na_storage(request.form.get("dostepny_od"))
+        dostepny_do = datetime_local_na_storage(request.form.get("dostepny_do"))
+        zamkniety = request.form.get("zamkniety") == "on"
+
+        zapisz_ustawienia_testu(
+            test_id, limit_czasu_min, tryb_szczegolow, szczegoly_od, wynik_widoczny, dostepny_od, dostepny_do,
+            liczba_pytan_do_losowania,
+        )
+        ustaw_zamkniecie_testu(test_id, zamkniety)
+
+        flash("Zapisano ustawienia testu.", "ok")
+        return redirect(url_for("admin_test", test_id=test_id))
+
+    return render_template(
+        "admin_ustawienia_testu.html",
+        test=dict(test),
+        liczba_pytan_w_banku=liczba_pytan_w_banku,
+        szczegoly_od_local=storage_na_datetime_local(test["szczegoly_od"]),
+        dostepny_od_local=storage_na_datetime_local(test["dostepny_od"]),
+        dostepny_do_local=storage_na_datetime_local(test["dostepny_do"]),
     )
 
 

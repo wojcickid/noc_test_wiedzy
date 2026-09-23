@@ -125,6 +125,7 @@ table.szczegoly tr.zle { background-color: #fdecea; }
 table.szczegoly tr.status-wolny { background-color: #f4f4f4; }
 table.szczegoly tr.status-w_trakcie { background-color: #fff8e1; }
 table.szczegoly tr.status-zakonczone { background-color: #e6f4ea; }
+table.szczegoly tr.status-czas_minal { background-color: #fdecea; }
 .admin-nav {
     display: flex;
     justify-content: space-between;
@@ -184,4 +185,72 @@ form.resetuj button {
     margin: 0;
     padding: 2px 8px;
     font-size: 0.85em;
+}
+.pasek-postepu {
+    background-color: #e9ecef;
+    border-radius: 5px;
+    height: 10px;
+    overflow: hidden;
+    margin-top: 10px;
+}
+.pasek-postepu-wypelnienie {
+    background-color: #007BFF;
+    height: 100%;
+}
+.licznik {
+    font-weight: bold;
+    font-size: 1.2em;
+    margin-top: 10px;
+}
+.licznik-koniec {
+    color: #c0392b;
+}
+.opcje {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 10px;
+}
+.opcja {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-align: left;
+    font-weight: normal;
+    margin-top: 0;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    cursor: pointer;
+}
+.opcja:has(input:checked) {
+    background-color: #e8f0fe;
+    border-color: #007BFF;
+}
+.opcja input[type="radio"] {
+    margin: 0;
+}
+.litera {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background-color: #007BFF;
+    color: white;
+    font-weight: bold;
+    flex-shrink: 0;
+}
+.zasady {
+    text-align: left;
+}
+.badge-zamkniety {
+    display: inline-block;
+    background-color: #6c757d;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.8em;
+    margin-left: 8px;
 }

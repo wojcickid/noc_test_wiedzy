@@ -7,7 +7,7 @@ import secrets
 import sqlite3
 import string
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import openpyxl
 
@@ -24,6 +24,10 @@ WYMAGANE_KOLUMNY_PYTAN = ["tresc_pytania", "opcja_a", "opcja_b", "opcja_c", "opc
 KOLUMNA_WYJASNIENIE = "wyjasnienie"
 ODPOWIEDZI_DOZWOLONE = {"A", "B", "C", "D"}
 
+# Zapas czasu po upłynięciu limitu (F1) — bufor na opóźnienie sieci przy
+# auto-wysyłce formularza dokładnie w momencie 0:00 na liczniku.
+TOLERANCJA_SEKUNDY = 5
+
 
 class BladImportu(Exception):
     pass
@@ -33,7 +37,14 @@ CREATE TABLE IF NOT EXISTS testy (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nazwa TEXT NOT NULL UNIQUE,
     data_importu TEXT NOT NULL,
-    liczba_pytan_do_losowania INTEGER NOT NULL DEFAULT 20
+    liczba_pytan_do_losowania INTEGER NOT NULL DEFAULT 20,
+    limit_czasu_min INTEGER,
+    tryb_szczegolow TEXT NOT NULL DEFAULT 'po_zamknieciu',
+    szczegoly_od TEXT,
+    wynik_widoczny TEXT NOT NULL DEFAULT 'od_razu',
+    dostepny_od TEXT,
+    dostepny_do TEXT,
+    zamkniety INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS pytania (
@@ -117,7 +128,7 @@ SELECT
 FROM odpowiedzi_uzytkownika ou
 JOIN pytania p ON p.id = ou.pytanie_id
 JOIN podejscia pj ON pj.token = ou.token
-WHERE pj.status = 'zakonczone';
+WHERE pj.status IN ('zakonczone', 'czas_minal');
 
 DROP VIEW IF EXISTS zbiorcze_wyniki;
 -- Odpowiednik dawnego wyniki_testu.xlsx — jeden wiersz na zakończone podejście.
@@ -148,7 +159,7 @@ SELECT
 FROM podejscia pj
 JOIN tokeny tk ON tk.token = pj.token
 JOIN testy t ON t.id = tk.test_id
-WHERE pj.status = 'zakonczone';
+WHERE pj.status IN ('zakonczone', 'czas_minal');
 """
 
 
@@ -167,6 +178,24 @@ def _migruj_tabele(conn):
     kolumny_pytania = {w["name"] for w in conn.execute("PRAGMA table_info(pytania)").fetchall()}
     if "wyjasnienie" not in kolumny_pytania:
         conn.execute("ALTER TABLE pytania ADD COLUMN wyjasnienie TEXT")
+
+    # Etap 4 (F1, F2) — ustawienia kontroli nad testem: limit czasu, widoczność
+    # wyników/szczegółów, okno dostępności, zamknięcie testu.
+    kolumny_testy = {w["name"] for w in conn.execute("PRAGMA table_info(testy)").fetchall()}
+    if "limit_czasu_min" not in kolumny_testy:
+        conn.execute("ALTER TABLE testy ADD COLUMN limit_czasu_min INTEGER")
+    if "tryb_szczegolow" not in kolumny_testy:
+        conn.execute("ALTER TABLE testy ADD COLUMN tryb_szczegolow TEXT NOT NULL DEFAULT 'po_zamknieciu'")
+    if "szczegoly_od" not in kolumny_testy:
+        conn.execute("ALTER TABLE testy ADD COLUMN szczegoly_od TEXT")
+    if "wynik_widoczny" not in kolumny_testy:
+        conn.execute("ALTER TABLE testy ADD COLUMN wynik_widoczny TEXT NOT NULL DEFAULT 'od_razu'")
+    if "dostepny_od" not in kolumny_testy:
+        conn.execute("ALTER TABLE testy ADD COLUMN dostepny_od TEXT")
+    if "dostepny_do" not in kolumny_testy:
+        conn.execute("ALTER TABLE testy ADD COLUMN dostepny_do TEXT")
+    if "zamkniety" not in kolumny_testy:
+        conn.execute("ALTER TABLE testy ADD COLUMN zamkniety INTEGER NOT NULL DEFAULT 0")
 
     _odtworz_historyczne_podejscia(conn)
 
@@ -430,3 +459,92 @@ def resetuj_token(token):
             (token,),
         )
     return True
+
+
+TRYBY_SZCZEGOLOW = {"natychmiast", "po_zamknieciu", "od_daty", "nigdy"}
+TRYBY_WYNIKU = {"od_razu", "razem_ze_szczegolami"}
+FORMAT_DATY = "%Y-%m-%d %H:%M:%S"
+
+
+def zapisz_ustawienia_testu(
+    test_id, limit_czasu_min, tryb_szczegolow, szczegoly_od, wynik_widoczny, dostepny_od, dostepny_do,
+    liczba_pytan_do_losowania=None,
+):
+    """Aktualizuje ustawienia kontroli nad testem (Etap 4, F1/F2). Zmiana
+    działa też na trwające podejścia, bo ustawienia są czytane na żywo przy
+    każdym wejściu na `/test` — zgodnie z decyzją usera z Etapu 4.
+    `liczba_pytan_do_losowania=None` zostawia dotychczasową wartość bez zmian
+    (np. wywołania z testów, które jej nie dotyczą)."""
+    if tryb_szczegolow not in TRYBY_SZCZEGOLOW:
+        raise ValueError(f"Nieprawidłowy tryb szczegółów: {tryb_szczegolow}")
+    if wynik_widoczny not in TRYBY_WYNIKU:
+        raise ValueError(f"Nieprawidłowy tryb widoczności wyniku: {wynik_widoczny}")
+    with baza() as conn:
+        if liczba_pytan_do_losowania is None:
+            cur = conn.execute(
+                """
+                UPDATE testy SET
+                    limit_czasu_min = ?, tryb_szczegolow = ?, szczegoly_od = ?,
+                    wynik_widoczny = ?, dostepny_od = ?, dostepny_do = ?
+                WHERE id = ?
+                """,
+                (limit_czasu_min, tryb_szczegolow, szczegoly_od, wynik_widoczny, dostepny_od, dostepny_do, test_id),
+            )
+        else:
+            cur = conn.execute(
+                """
+                UPDATE testy SET
+                    limit_czasu_min = ?, tryb_szczegolow = ?, szczegoly_od = ?,
+                    wynik_widoczny = ?, dostepny_od = ?, dostepny_do = ?, liczba_pytan_do_losowania = ?
+                WHERE id = ?
+                """,
+                (
+                    limit_czasu_min, tryb_szczegolow, szczegoly_od, wynik_widoczny, dostepny_od, dostepny_do,
+                    liczba_pytan_do_losowania, test_id,
+                ),
+            )
+    return cur.rowcount > 0
+
+
+def ustaw_zamkniecie_testu(test_id, zamkniety):
+    """„Zamknij test i opublikuj odpowiedzi” / ponowne otwarcie (F2, punkt 5) —
+    zamknięcie blokuje nowe podejścia (start.html), a w trybie szczegółów
+    `po_zamknieciu` odblokowuje uczestnikom poprawne odpowiedzi."""
+    with baza() as conn:
+        cur = conn.execute("UPDATE testy SET zamkniety = ? WHERE id = ?", (1 if zamkniety else 0, test_id))
+    return cur.rowcount > 0
+
+
+def oblicz_termin(data_rozpoczecia_str, limit_czasu_min):
+    """Nominalny termin upłynięcia limitu czasu (bez tolerancji) — używane do
+    wyświetlania licznika uczestnikowi (F1)."""
+    start = datetime.strptime(data_rozpoczecia_str, FORMAT_DATY)
+    return start + timedelta(minutes=limit_czasu_min)
+
+
+def domknij_przeterminowane_podejscia(test_id=None):
+    """Leniwe domykanie podejść, których limit czasu (+ 5 s tolerancji) minął,
+    a status wciąż jest `w_trakcie` (F1, punkt 5) — wywoływane przy wejściu
+    uczestnika na `/test`/`/wynik` i przy wyświetlaniu list w panelu admina,
+    żeby statusy tam były aktualne bez osobnego zadania w tle."""
+    teraz = datetime.now()
+    with baza() as conn:
+        zapytanie = """
+            SELECT pj.token AS token, pj.data_rozpoczecia AS data_rozpoczecia, t.limit_czasu_min AS limit_czasu_min
+            FROM podejscia pj
+            JOIN testy t ON t.id = pj.test_id
+            WHERE pj.status = 'w_trakcie' AND t.limit_czasu_min IS NOT NULL
+        """
+        parametry = ()
+        if test_id is not None:
+            zapytanie += " AND pj.test_id = ?"
+            parametry = (test_id,)
+        kandydaci = conn.execute(zapytanie, parametry).fetchall()
+
+        for wiersz in kandydaci:
+            termin = oblicz_termin(wiersz["data_rozpoczecia"], wiersz["limit_czasu_min"]) + timedelta(seconds=TOLERANCJA_SEKUNDY)
+            if teraz > termin:
+                conn.execute(
+                    "UPDATE podejscia SET status = 'czas_minal', data_zakonczenia = ? WHERE token = ? AND status = 'w_trakcie'",
+                    (teraz.strftime(FORMAT_DATY), wiersz["token"]),
+                )

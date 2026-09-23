@@ -19,7 +19,8 @@ from pomocnicze import przejdz_caly_test
 
 def test_wznowienie_na_innym_urzadzeniu_kontynuuje_od_tego_samego_pytania(klient, test_z_pytaniami):
     (token,) = [w["token"] for w in db.wygeneruj_tokeny(test_z_pytaniami, 1, dlugosc=6)]
-    start = klient.post("/", data={"token": token}, follow_redirects=True)
+    klient.post("/", data={"token": token}, follow_redirects=True)
+    start = klient.post("/test", data={"start": "1"}, follow_redirects=True)
     pytanie_id = re.search(rb'name="pytanie_id" value="(\d+)"', start.data).group(1).decode()
     klient.post("/test", data={"pytanie_id": pytanie_id, "odpowiedz": "B"}, follow_redirects=True)
 
@@ -33,19 +34,20 @@ def test_wznowienie_na_innym_urzadzeniu_kontynuuje_od_tego_samego_pytania(klient
 
 def test_podwojne_kliknieciu_rozpocznij_wznawia_zamiast_bledu(klient, test_z_pytaniami):
     (token,) = [w["token"] for w in db.wygeneruj_tokeny(test_z_pytaniami, 1, dlugosc=6)]
-    pierwszy = klient.post("/", data={"token": token}, follow_redirects=True)
-    drugi = klient.post("/", data={"token": token}, follow_redirects=True)
+    klient.post("/", data={"token": token}, follow_redirects=True)
+    pierwszy = klient.post("/test", data={"start": "1"}, follow_redirects=True)
+    drugi = klient.post("/test", data={"start": "1"}, follow_redirects=True)
 
     assert b"Pytanie 1 z 3" in pierwszy.data
     assert b"Pytanie 1 z 3" in drugi.data
-    assert "Nieprawidłowy lub już wykorzystany".encode("utf-8") not in drugi.data
 
 
 # --- B8: podwójne wysłanie ostatniej odpowiedzi ("Zakończ test") nie duplikuje wpisu -----
 
 def test_podwojne_wyslanie_ostatniej_odpowiedzi_nie_duplikuje_wpisu(klient, test_z_pytaniami):
     (token,) = [w["token"] for w in db.wygeneruj_tokeny(test_z_pytaniami, 1, dlugosc=6)]
-    strona = klient.post("/", data={"token": token}, follow_redirects=True)
+    klient.post("/", data={"token": token}, follow_redirects=True)
+    strona = klient.post("/test", data={"start": "1"}, follow_redirects=True)
     for _ in range(2):
         pytanie_id = re.search(rb'name="pytanie_id" value="(\d+)"', strona.data).group(1).decode()
         strona = klient.post("/test", data={"pytanie_id": pytanie_id, "odpowiedz": "B"}, follow_redirects=True)
@@ -85,7 +87,8 @@ def test_unikalny_indeks_blokuje_duplikat_odpowiedzi_na_poziomie_bazy(klient, te
 
 def test_sprawdz_wynik_nie_pokazuje_czesciowych_wynikow_w_trakcie_testu(klient, test_z_pytaniami):
     (token,) = [w["token"] for w in db.wygeneruj_tokeny(test_z_pytaniami, 1, dlugosc=6)]
-    start = klient.post("/", data={"token": token}, follow_redirects=True)
+    klient.post("/", data={"token": token}, follow_redirects=True)
+    start = klient.post("/test", data={"start": "1"}, follow_redirects=True)
     pytanie_id = re.search(rb'name="pytanie_id" value="(\d+)"', start.data).group(1).decode()
     klient.post("/test", data={"pytanie_id": pytanie_id, "odpowiedz": "B"}, follow_redirects=True)
 
@@ -143,6 +146,7 @@ def test_status_tokenow_w_panelu(klient, haslo_admina, test_z_pytaniami):
 
     with app_module.app.test_client() as c:
         c.post("/", data={"token": w_trakcie}, follow_redirects=True)
+        c.post("/test", data={"start": "1"}, follow_redirects=True)
     with app_module.app.test_client() as c:
         przejdz_caly_test(c, zakonczony)
 

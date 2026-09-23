@@ -10,15 +10,17 @@
     </form>
 </nav>
 {% endblock %}
-{% block naglowek %}{{ test.nazwa }}{% endblock %}
+{% block naglowek %}{{ test.nazwa }}{% if test.zamkniety %}<span class="badge-zamkniety">Zamknięty</span>{% endif %}{% endblock %}
 {% block tresc %}
 {% include "_komunikaty.html" %}
 <p>
     Pytań w banku: <strong>{{ liczba_pytan }}</strong>
     &middot; Losowanych na podejście: <strong>{{ test.liczba_pytan_do_losowania }}</strong>
     &middot; Zaimportowano: {{ test.data_importu }}
+    {% if test.limit_czasu_min %}&middot; Limit czasu: <strong>{{ test.limit_czasu_min }} min</strong>{% endif %}
 </p>
 <a class="btn" href="{{ url_for('admin_tokeny', test_id=test.id) }}">Zarządzaj tokenami</a>
+<a class="btn" href="{{ url_for('admin_ustawienia_testu', test_id=test.id) }}">Ustawienia testu</a>
 
 <h2>Wyniki uczestników</h2>
 {% if wyniki %}

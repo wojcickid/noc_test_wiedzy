@@ -1,18 +1,66 @@
 {% extends "base.html" %}
-{% block tytul %}Test{% endblock %}
-{% block naglowek %}Test{% endblock %}
+{% block tytul %}{{ test_nazwa }} — pytanie {{ numer }}{% endblock %}
+{% block naglowek %}{{ test_nazwa }}{% endblock %}
 {% block tresc %}
 <p class="postep">Pytanie {{ numer }} z {{ liczba_pytan }}</p>
+<div class="pasek-postepu">
+    <div class="pasek-postepu-wypelnienie" style="width: {{ ((numer - 1) / liczba_pytan * 100) | round(1) }}%"></div>
+</div>
+{% if pozostalo_s is not none %}
+<p class="licznik" id="licznik" data-pozostalo-s="{{ pozostalo_s }}">Pozostały czas: --:--</p>
+{% endif %}
 {% include "_komunikaty.html" %}
-<form action="{{ url_for('test') }}" method="post">
+<form action="{{ url_for('test') }}" method="post" id="formularz-pytania">
     <input type="hidden" name="pytanie_id" value="{{ pytanie.id }}">
     <div class="pytanie">
         <p>{{ pytanie.tresc_pytania }}</p>
-        <label><input type="radio" name="odpowiedz" value="A" required> {{ pytanie.opcja_a }}</label>
-        <label><input type="radio" name="odpowiedz" value="B"> {{ pytanie.opcja_b }}</label>
-        <label><input type="radio" name="odpowiedz" value="C"> {{ pytanie.opcja_c }}</label>
-        <label><input type="radio" name="odpowiedz" value="D"> {{ pytanie.opcja_d }}</label>
+        <div class="opcje">
+            <label class="opcja"><span class="litera">A</span><input type="radio" name="odpowiedz" value="A" required> {{ pytanie.opcja_a }}</label>
+            <label class="opcja"><span class="litera">B</span><input type="radio" name="odpowiedz" value="B"> {{ pytanie.opcja_b }}</label>
+            <label class="opcja"><span class="litera">C</span><input type="radio" name="odpowiedz" value="C"> {{ pytanie.opcja_c }}</label>
+            <label class="opcja"><span class="litera">D</span><input type="radio" name="odpowiedz" value="D"> {{ pytanie.opcja_d }}</label>
+        </div>
     </div>
     <button type="submit">{% if numer == liczba_pytan %}Zakończ test{% else %}Dalej{% endif %}</button>
 </form>
+{% if pozostalo_s is not none %}
+<script>
+(function () {
+    var licznikEl = document.getElementById("licznik");
+    var pozostalo = parseInt(licznikEl.dataset.pozostaloS, 10);
+    var poczatek = performance.now();
+
+    function odswiez() {
+        var uplynelo = Math.floor((performance.now() - poczatek) / 1000);
+        var sekundy = Math.max(0, pozostalo - uplynelo);
+        var min = Math.floor(sekundy / 60);
+        var sek = sekundy % 60;
+        licznikEl.textContent = "Pozostały czas: " + min + ":" + (sek < 10 ? "0" : "") + sek;
+        if (sekundy <= 60) {
+            licznikEl.classList.add("licznik-koniec");
+        }
+        if (sekundy <= 0) {
+            clearInterval(interwal);
+            // form.submit() celowo zamiast requestSubmit() — pomija walidację
+            // "required", więc czas kończy test nawet bez zaznaczonej odpowiedzi.
+            document.getElementById("formularz-pytania").submit();
+            return;
+        }
+    }
+    odswiez();
+    var interwal = setInterval(odswiez, 1000);
+})();
+</script>
+{% endif %}
+<script>
+(function () {
+    var mapa = {"1": "A", "2": "B", "3": "C", "4": "D", "a": "A", "b": "B", "c": "C", "d": "D"};
+    document.addEventListener("keydown", function (zdarzenie) {
+        var litera = mapa[zdarzenie.key.toLowerCase()];
+        if (!litera) return;
+        var pole = document.querySelector('input[name="odpowiedz"][value="' + litera + '"]');
+        if (pole) pole.checked = true;
+    });
+})();
+</script>
 {% endblock %}

@@ -53,7 +53,8 @@ def test_post_z_poprawnym_csrf_tokenem_dziala(klient, haslo_admina):
 
 def test_nieprawidlowa_litera_odpowiedzi_nie_przechodzi_dalej(klient, test_z_pytaniami):
     (token,) = [w["token"] for w in db.wygeneruj_tokeny(test_z_pytaniami, 1, dlugosc=6)]
-    start = klient.post("/", data={"token": token}, follow_redirects=True)
+    klient.post("/", data={"token": token}, follow_redirects=True)
+    start = klient.post("/test", data={"start": "1"}, follow_redirects=True)
     pytanie_id = re.search(rb'name="pytanie_id" value="(\d+)"', start.data).group(1).decode()
 
     odpowiedz = klient.post("/test", data={"pytanie_id": pytanie_id, "odpowiedz": "Z"}, follow_redirects=True)
@@ -66,6 +67,7 @@ def test_nieprawidlowa_litera_odpowiedzi_nie_przechodzi_dalej(klient, test_z_pyt
 def test_niezgodny_pytanie_id_pokazuje_osobny_komunikat(klient, test_z_pytaniami):
     (token,) = [w["token"] for w in db.wygeneruj_tokeny(test_z_pytaniami, 1, dlugosc=6)]
     klient.post("/", data={"token": token}, follow_redirects=True)
+    klient.post("/test", data={"start": "1"}, follow_redirects=True)
 
     odpowiedz = klient.post("/test", data={"pytanie_id": "999999", "odpowiedz": "B"}, follow_redirects=True)
     assert "To pytanie zostało już zapisane".encode("utf-8") in odpowiedz.data
@@ -82,7 +84,8 @@ def test_test_bez_pytan_nie_zapetla_i_pokazuje_komunikat(klient):
         test_id = cur.lastrowid
     (token,) = [w["token"] for w in db.wygeneruj_tokeny(test_id, 1, dlugosc=6)]
 
-    odpowiedz = klient.post("/", data={"token": token}, follow_redirects=True)
+    klient.post("/", data={"token": token}, follow_redirects=True)
+    odpowiedz = klient.post("/test", data={"start": "1"}, follow_redirects=True)
     assert "nie ma jeszcze żadnych pytań".encode("utf-8") in odpowiedz.data
 
 

@@ -73,7 +73,7 @@
                 </form>
             </td>
             <td>
-                {{ {"wolny": "wolny", "w_trakcie": "w trakcie", "zakonczone": "ukończony"}[token.status] }}
+                {{ {"wolny": "wolny", "w_trakcie": "w trakcie", "zakonczone": "ukończony", "czas_minal": "czas minął"}[token.status] }}
                 {% if token.wykorzystany %}
                 <form class="resetuj" action="{{ url_for('admin_reset_token', token=token.token) }}" method="post" onsubmit="return confirm('Zresetować ten token? Dotychczasowe odpowiedzi zostaną usunięte.');">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
