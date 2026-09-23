@@ -21,6 +21,7 @@
     {% if test.prog_zaliczenia is not none %}&middot; Próg zaliczenia: <strong>{{ test.prog_zaliczenia }}%</strong>{% endif %}
 </p>
 <a class="btn" href="{{ url_for('admin_tokeny', test_id=test.id) }}">Zarządzaj tokenami</a>
+<a class="btn" href="{{ url_for('admin_mail_testu', test_id=test.id) }}">Maile do uczestników</a>
 <a class="btn" href="{{ url_for('admin_ustawienia_testu', test_id=test.id) }}">Ustawienia testu</a>
 <a class="btn" href="{{ url_for('admin_statystyki', test_id=test.id) }}">Statystyki pytań</a>
 
@@ -42,7 +43,7 @@
     <tbody>
         {% for wynik in wyniki %}
         <tr>
-            <td>{{ wynik.przypisany or '—' }}</td>
+            <td>{{ wynik|uczestnik or '—' }}</td>
             <td><a href="{{ url_for('admin_token_szczegoly', token=wynik.token) }}">{{ wynik.token }}</a></td>
             <td>{{ wynik.poprawne }}</td>
             <td>{{ wynik.wszystkie }}</td>

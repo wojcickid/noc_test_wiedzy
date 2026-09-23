@@ -1,0 +1,61 @@
+{% set klasa_body = "admin" %}
+{% extends "base.html" %}
+{% block tytul %}Ustawienia poczty — panel administracyjny{% endblock %}
+{% block nav %}
+<nav class="admin-nav">
+    <a href="{{ url_for('admin_panel') }}">← Panel</a>
+    <form action="{{ url_for('admin_logout') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="wyloguj">Wyloguj</button>
+    </form>
+</nav>
+{% endblock %}
+{% block naglowek %}Ustawienia poczty{% endblock %}
+{% block tresc %}
+{% include "_komunikaty.html" %}
+
+<h2>Serwer poczty (plik config.json)</h2>
+{% if konfiguracja %}
+<table class="szczegoly">
+    <tbody>
+        <tr><th>Serwer</th><td>{{ konfiguracja.host }}:{{ konfiguracja.port }}</td></tr>
+        <tr><th>Szyfrowanie</th><td>{{ konfiguracja.szyfrowanie }}</td></tr>
+        <tr><th>Login</th><td>{{ konfiguracja.login or '— (bez logowania)' }}</td></tr>
+        <tr><th>Hasło</th><td>{{ 'ustawione' if konfiguracja.haslo_ustawione else 'brak' }}</td></tr>
+        <tr><th>Adres nadawcy</th><td>{{ konfiguracja.nadawca_email }}</td></tr>
+    </tbody>
+</table>
+{% else %}
+<p class="komunikat-blad">{{ blad_konfiguracji }}</p>
+{% endif %}
+<p>
+    Dane serwera i hasło zmienia się wyłącznie w pliku <code>config.json</code> w katalogu aplikacji (wzór:
+    <code>config.przyklad.json</code>, instrukcja dla Gmaila w README) — hasło nigdy nie jest pokazywane w panelu.
+    Zmiany w pliku działają od razu, bez restartu aplikacji.
+</p>
+
+<form action="{{ url_for('admin_poczta') }}" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="nazwa_nadawcy">Nazwa nadawcy (widoczna w skrzynce odbiorcy jako „Od”):</label>
+    <input type="text" id="nazwa_nadawcy" name="nazwa_nadawcy" value="{{ ustawienia.nazwa_nadawcy }}" maxlength="100" required>
+
+    <label for="adres_aplikacji">Adres aplikacji w linkach w mailach:</label>
+    <input type="text" id="adres_aplikacji" name="adres_aplikacji" value="{{ ustawienia.adres_aplikacji }}" required>
+    {% if adres_lokalny %}
+    <p class="komunikat-blad">
+        Uwaga: adres „localhost” działa tylko na komputerze, na którym uruchomiono serwer. Żeby link z maila
+        zadziałał u uczestników, wpisz adres tego komputera w sieci firmowej, np. <code>http://192.168.1.10:5555</code>
+        albo <code>http://nazwa-komputera:5555</code>.
+    </p>
+    {% endif %}
+
+    <button type="submit">Zapisz</button>
+</form>
+
+<form action="{{ url_for('admin_poczta_test') }}" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="adres">Wyślij mail testowy na adres:</label>
+    <input type="email" id="adres" name="adres" required placeholder="twoj.adres@firma.pl">
+    <button type="submit"{% if not konfiguracja %} disabled{% endif %}>Wyślij mail testowy</button>
+</form>
+{% endblock %}

@@ -12,3 +12,5 @@ baza.db-shm
 baza.db.bak-*
 *.xlsx
 .pytest_cache/
+# Ustawienia serwera poczty z hasłem (Etap 6) — wzór w config.przyklad.json
+config.json

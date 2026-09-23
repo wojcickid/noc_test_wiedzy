@@ -16,24 +16,27 @@
 
 {% if nowe_tokeny %}
 <div class="nowe-tokeny">
-    <p><strong>Nowo wygenerowane tokeny (skopiuj i rozdaj uczestnikom):</strong></p>
+    <p><strong>Nowo wygenerowane tokeny (skopiuj i rozdaj uczestnikom albo wyślij mailem):</strong></p>
     <table class="szczegoly">
         <thead><tr><th>Uczestnik</th><th>Token</th></tr></thead>
         <tbody>
             {% for wpis in nowe_tokeny %}
-            <tr><td>{{ wpis.przypisany or '—' }}</td><td>{{ wpis.token }}</td></tr>
+            <tr><td>{{ wpis|uczestnik or '—' }}</td><td>{{ wpis.token }}</td></tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
 {% endif %}
 
-<form action="{{ url_for('admin_tokeny', test_id=test.id) }}" method="post">
+<form action="{{ url_for('admin_tokeny', test_id=test.id) }}" method="post" enctype="multipart/form-data">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <label for="lista_uczestnikow">Lista uczestników (opcjonalnie — jedna osoba na linię, imię i/lub e-mail). Jeśli wypełnisz, powstanie po jednym przypisanym tokenie na linię:</label>
-    <textarea id="lista_uczestnikow" name="lista_uczestnikow" rows="5" placeholder="Jan Kowalski&#10;jan.kowalski@firma.pl&#10;Anna Nowak"></textarea>
+    <label for="lista_uczestnikow">Lista uczestników (opcjonalnie — jedna osoba na linię: <code>Imię Nazwisko;e-mail</code>, samo imię albo sam e-mail). Powstanie po jednym przypisanym tokenie na linię:</label>
+    <textarea id="lista_uczestnikow" name="lista_uczestnikow" rows="5" placeholder="Jan Kowalski;jan.kowalski@firma.pl&#10;Anna Nowak;anna.nowak@firma.pl&#10;Piotr Wiśniewski">{{ lista_uczestnikow }}</textarea>
 
-    <label for="liczba">...albo — jeśli lista pusta — wygeneruj tokeny anonimowe, ile:</label>
+    <label for="plik_uczestnikow">...albo plik z listą (.xlsx lub .csv, w pierwszym wierszu nagłówki kolumn <code>imie</code> i/lub <code>email</code>):</label>
+    <input type="file" id="plik_uczestnikow" name="plik_uczestnikow" accept=".xlsx,.csv">
+
+    <label for="liczba">...albo — bez listy i pliku — wygeneruj tokeny anonimowe, ile:</label>
     <input type="number" id="liczba" name="liczba" min="1" max="500" value="20">
 
     <label for="dlugosc">Długość tokenu:</label>
@@ -47,11 +50,12 @@
 <div class="akcje-tokenow">
     <button type="button" id="kopiuj-tokeny">Kopiuj wszystkie</button>
     <a class="btn" href="{{ url_for('admin_eksport_tokenow', test_id=test.id) }}">Eksportuj do CSV</a>
+    <a class="btn" href="{{ url_for('admin_mail_testu', test_id=test.id) }}">Maile do uczestników</a>
     <span id="kopiuj-komunikat" class="komunikat-ok"></span>
 </div>
 <textarea id="tokeny-do-skopiowania" class="ukryte" readonly aria-hidden="true">{{ tekst_do_skopiowania }}</textarea>
 <script>
-    // Format: uczestnik<TAB>token — po wklejeniu do Excela daje dwie kolumny.
+    // Format: imię<TAB>e-mail<TAB>token — po wklejeniu do Excela daje trzy kolumny.
     // navigator.clipboard działa tylko na HTTPS/localhost, a appka w sieci
     // firmowej chodzi po zwykłym HTTP, stąd zapasowe execCommand("copy").
     document.getElementById("kopiuj-tokeny").addEventListener("click", function () {
@@ -70,12 +74,31 @@
         }
     });
 </script>
+
+{# Checkboxy w tabeli należą do tego formularza przez atrybut form="…" —
+   formularzy w wierszach (przypisanie, reset) nie można w nim zagnieździć. #}
+<form id="wysylka-zaznaczonych" class="akcje-tokenow" action="{{ url_for('admin_wyslij_maile', test_id=test.id) }}" method="post"
+      onsubmit="return confirm('Wysłać zaproszenie (ponownie) do zaznaczonych osób?');">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="rodzaj" value="zaznaczone">
+    <label class="w-linii"><input type="checkbox" id="zaznacz-wszystkie"> zaznacz wszystkie z e-mailem</label>
+    <button type="submit">Wyślij zaproszenie do zaznaczonych</button>
+</form>
+<script>
+    document.getElementById("zaznacz-wszystkie").addEventListener("change", function () {
+        var pola = document.querySelectorAll("input[name=tokeny]");
+        for (var i = 0; i < pola.length; i++) { pola[i].checked = this.checked; }
+    });
+</script>
+
 <table class="szczegoly">
     <thead>
         <tr>
+            <th></th>
             <th>Token</th>
-            <th>Przypisany</th>
+            <th>Uczestnik</th>
             <th>Status</th>
+            <th>Mail</th>
             <th>Utworzono</th>
             <th>Wykorzystano</th>
         </tr>
@@ -83,6 +106,11 @@
     <tbody>
         {% for token in tokeny %}
         <tr class="status-{{ token.status }}">
+            <td>
+                {% if token.email %}
+                <input type="checkbox" name="tokeny" value="{{ token.token }}" form="wysylka-zaznaczonych" aria-label="Zaznacz {{ token.token }}">
+                {% endif %}
+            </td>
             <td>
                 {% if token.wykorzystany %}
                 <a href="{{ url_for('admin_token_szczegoly', token=token.token) }}">{{ token.token }}</a>
@@ -94,7 +122,8 @@
                 <form class="przypisz" action="{{ url_for('admin_przypisz_token', token=token.token) }}" method="post">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="test_id" value="{{ test.id }}">
-                    <input type="text" name="przypisany" value="{{ token.przypisany or '' }}" placeholder="imię / e-mail">
+                    <input type="text" name="imie" value="{{ token.imie or '' }}" placeholder="imię i nazwisko" aria-label="Imię">
+                    <input type="text" name="email" value="{{ token.email or '' }}" placeholder="e-mail" aria-label="E-mail">
                     <button type="submit">Zapisz</button>
                 </form>
             </td>
@@ -107,6 +136,14 @@
                     <button type="submit">Resetuj</button>
                 </form>
                 {% endif %}
+            </td>
+            <td class="status-maila">
+                {% if token.mail_status == 'blad' %}
+                <span class="niezaliczony" title="{{ token.mail_blad }}">błąd</span>: {{ token.mail_blad }}
+                {% endif %}
+                {% if token.mail_wyslany_at %}<div>wysłano {{ token.mail_wyslany_at|data_pl }}</div>{% endif %}
+                {% if token.przypomnienie_wyslane_at %}<div>przypomnienie {{ token.przypomnienie_wyslane_at|data_pl }}</div>{% endif %}
+                {% if not token.email %}—{% elif not token.mail_status %}nie wysłano{% endif %}
             </td>
             <td>{{ token.data_utworzenia }}</td>
             <td>{{ token.data_wykorzystania or '—' }}</td>

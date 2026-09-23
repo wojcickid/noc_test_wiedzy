@@ -16,7 +16,7 @@ from pomocnicze import przejdz_caly_test
 
 def _ukonczony_token(klient, test_id, litera="B", przypisany=None):
     """Generuje token i przechodzi nim cały test, odpowiadając `litera`."""
-    (wpis,) = db.wygeneruj_tokeny(test_id, 1, dlugosc=6, przypisania=[przypisany] if przypisany else None)
+    (wpis,) = db.wygeneruj_tokeny(test_id, 1, dlugosc=6, uczestnicy=[(przypisany, None)] if przypisany else None)
     przejdz_caly_test(klient, wpis["token"], litera)
     return wpis["token"]
 
@@ -194,10 +194,11 @@ def test_eksport_wynikow_arkusz_zbiorczy(klient, test_z_pytaniami, haslo_admina)
     wiersz = wiersze[1]
     assert wiersz[0] == token
     assert wiersz[1] == "Zażółć Gęślą"
-    assert wiersz[2] == "ukończony"
-    assert isinstance(wiersz[3], datetime) and isinstance(wiersz[4], datetime)
-    assert wiersz[6:9] == (3, 3, 1.0)
-    assert wiersz[9] == "zdał"
+    assert wiersz[2] is None
+    assert wiersz[3] == "ukończony"
+    assert isinstance(wiersz[4], datetime) and isinstance(wiersz[5], datetime)
+    assert wiersz[7:10] == (3, 3, 1.0)
+    assert wiersz[10] == "zdał"
 
 
 def test_eksport_wynikow_bez_progu_nie_ma_kolumny_zaliczenia(klient, test_z_pytaniami, haslo_admina):
@@ -221,10 +222,10 @@ def test_eksport_wynikow_arkusz_szczegolowy_z_brakiem_odpowiedzi(klient, test_z_
     zaloguj_admina(klient, haslo_admina)
     skoroszyt = _xlsx(klient.get(f"/admin/testy/{test_z_pytaniami}/wyniki.xlsx"))
     zbiorczo = list(skoroszyt["Zbiorczo"].iter_rows(values_only=True))
-    assert zbiorczo[1][2] == "czas minął"
+    assert zbiorczo[1][3] == "czas minął"
     szczegoly = list(skoroszyt["Szczegółowo"].iter_rows(values_only=True))[1:]
-    assert [w[2] for w in szczegoly] == [1, 2, 3]
-    assert all(w[4] == "brak odpowiedzi" and w[6] == "błędna" for w in szczegoly)
+    assert [w[3] for w in szczegoly] == [1, 2, 3]
+    assert all(w[5] == "brak odpowiedzi" and w[7] == "błędna" for w in szczegoly)
 
 
 def test_eksport_wynikow_nie_zawiera_podejsc_w_trakcie(klient, test_z_pytaniami, haslo_admina):
@@ -246,7 +247,7 @@ def test_eksport_wynikow_nieistniejacego_testu(klient, haslo_admina):
 # --- UI9: tokeny — kopiowanie i CSV ---------------------------------------------------
 
 def test_eksport_tokenow_csv(klient, test_z_pytaniami, haslo_admina):
-    db.wygeneruj_tokeny(test_z_pytaniami, 1, dlugosc=6, przypisania=["Łukasz Żółw"])
+    db.wygeneruj_tokeny(test_z_pytaniami, 1, dlugosc=6, uczestnicy=[("Łukasz Żółw", "lukasz@firma.pl")])
     ukonczony = _ukonczony_token(klient, test_z_pytaniami, "B")
     zaloguj_admina(klient, haslo_admina)
     odpowiedz = klient.get(f"/admin/testy/{test_z_pytaniami}/tokeny.csv")
@@ -254,10 +255,10 @@ def test_eksport_tokenow_csv(klient, test_z_pytaniami, haslo_admina):
     assert odpowiedz.data.startswith("﻿".encode("utf-8"))
 
     wiersze = list(csv.reader(io.StringIO(odpowiedz.data.decode("utf-8-sig")), delimiter=";"))
-    assert wiersze[0] == ["token", "przypisany", "status"]
-    statusy = {w[0]: (w[1], w[2]) for w in wiersze[1:]}
-    assert statusy[ukonczony] == ("", "ukończony")
-    assert ("Łukasz Żółw", "wolny") in statusy.values()
+    assert wiersze[0] == ["token", "imie", "email", "status"]
+    statusy = {w[0]: (w[1], w[2], w[3]) for w in wiersze[1:]}
+    assert statusy[ukonczony] == ("", "", "ukończony")
+    assert ("Łukasz Żółw", "lukasz@firma.pl", "wolny") in statusy.values()
 
 
 def test_eksport_tokenow_wymaga_logowania(klient, test_z_pytaniami):
@@ -265,11 +266,11 @@ def test_eksport_tokenow_wymaga_logowania(klient, test_z_pytaniami):
 
 
 def test_strona_tokenow_ma_tekst_do_skopiowania(klient, test_z_pytaniami, haslo_admina):
-    (wpis,) = db.wygeneruj_tokeny(test_z_pytaniami, 1, dlugosc=6, przypisania=["Anna Nowak"])
+    (wpis,) = db.wygeneruj_tokeny(test_z_pytaniami, 1, dlugosc=6, uczestnicy=[("Anna Nowak", None)])
     zaloguj_admina(klient, haslo_admina)
     tekst = klient.get(f"/admin/testy/{test_z_pytaniami}/tokeny").data.decode()
     assert "Kopiuj wszystkie" in tekst
-    assert f"Anna Nowak\t{wpis['token']}" in tekst
+    assert f"Anna Nowak\t\t{wpis['token']}" in tekst
 
 
 def test_panel_ma_link_do_tokenow_w_wierszu_testu(klient, test_z_pytaniami, haslo_admina):
@@ -310,7 +311,7 @@ def test_statystyki_sortuja_od_najslabszych_i_licza_brak_odpowiedzi(klient, hasl
     with db.baza() as conn:
         ids = {w["tresc_pytania"]: w["id"] for w in conn.execute("SELECT * FROM pytania WHERE test_id = ?", (test_id,))}
         # Podejście ręczne: wylosowane tylko „Łatwe” i „Trudne”, na „Trudne” brak odpowiedzi.
-        db.wygeneruj_tokeny(test_id, 1, dlugosc=6, przypisania=["x"])
+        db.wygeneruj_tokeny(test_id, 1, dlugosc=6, uczestnicy=[("x", None)])
         token = conn.execute("SELECT token FROM tokeny WHERE test_id = ?", (test_id,)).fetchone()[0]
         conn.execute(
             "INSERT INTO podejscia (token, test_id, wybrane_pytania, liczba_pytan, indeks_pytania, status, data_rozpoczecia, data_zakonczenia) "

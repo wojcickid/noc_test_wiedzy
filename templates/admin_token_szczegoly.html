@@ -3,16 +3,23 @@
 {% block tytul %}Wynik {{ token }} — panel administracyjny{% endblock %}
 {% block nav %}
 <nav class="admin-nav">
-    <a href="{{ url_for('admin_panel') }}">← Panel</a>
+    <a href="{{ url_for('admin_tokeny', test_id=dane.test_id) }}">← Tokeny: {{ dane.nazwa_testu }}</a>
     <form action="{{ url_for('admin_logout') }}" method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="wyloguj">Wyloguj</button>
     </form>
 </nav>
 {% endblock %}
-{% block naglowek %}Wynik: {{ token }}{% if przypisany %} — {{ przypisany }}{% endif %}{% endblock %}
+{% block naglowek %}Wynik: {{ token }}{% if dane|uczestnik %} — {{ dane|uczestnik }}{% endif %}{% endblock %}
 {% block tresc %}
-<p><strong>{{ poprawne }} / {{ wszystkie }}</strong></p>
+<p>
+    <strong>{{ poprawne }} / {{ wszystkie }} ({{ procent }}%)</strong>
+    &middot; {{ etykiety_statusow[dane.status] }}
+    {% if dane.prog_zaliczenia is not none %}
+    &middot; <span class="{{ 'zaliczony' if zaliczony else 'niezaliczony' }}">{{ 'zdał' if zaliczony else 'nie zdał' }}</span> (próg {{ dane.prog_zaliczenia }}%)
+    {% endif %}
+</p>
+<a class="btn" href="{{ url_for('admin_eksport_wyniku_tokenu', token=token) }}">Pobierz wynik tej osoby (.xlsx)</a>
 <table class="szczegoly">
     <thead>
         <tr>
@@ -33,4 +40,7 @@
         {% endfor %}
     </tbody>
 </table>
+{% if wszystkie > szczegoly|length %}
+<p>Bez odpowiedzi (np. minął czas): {{ wszystkie - szczegoly|length }} — pełna lista pytań jest w pliku .xlsx.</p>
+{% endif %}
 {% endblock %}

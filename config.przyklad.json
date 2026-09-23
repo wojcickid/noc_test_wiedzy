@@ -1,0 +1,10 @@
+{
+    "smtp": {
+        "host": "smtp.gmail.com",
+        "port": 587,
+        "szyfrowanie": "starttls",
+        "login": "twoje.konto@gmail.com",
+        "haslo": "tu-wklej-haslo-do-aplikacji",
+        "nadawca_email": "twoje.konto@gmail.com"
+    }
+}

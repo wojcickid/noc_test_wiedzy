@@ -6,6 +6,7 @@
     <title>{% block tytul %}{% endblock %}</title>
     <link rel="shortcut icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block glowa %}{% endblock %}
 </head>
 <body{% if klasa_body %} class="{{ klasa_body }}"{% endif %}>
     {% block nav %}{% endblock %}

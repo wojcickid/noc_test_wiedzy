@@ -5,7 +5,7 @@
 {% include "_komunikaty.html" %}
 <form action="/" method="post">
     <label for="token">Podaj swój token dostępu:</label>
-    <input type="text" id="token" name="token" required autocomplete="off" autocapitalize="characters">
+    <input type="text" id="token" name="token" required autocomplete="off" autocapitalize="characters" value="{{ token_z_linku }}">
     <button type="submit">Rozpocznij test</button>
 </form>
 <a class="btn" href="{{ url_for('sprawdz_wynik') }}">Sprawdź swój wynik</a>

@@ -107,7 +107,7 @@ def test_przypisz_z_nieliczbowym_test_id_nie_wywala_500(klient, haslo_admina, te
 
     odpowiedz = klient.post(
         f"/admin/tokeny/{token}/przypisz",
-        data={"przypisany": "X", "test_id": "abc", "csrf_token": pobierz_csrf_token(klient)},
+        data={"imie": "X", "test_id": "abc", "csrf_token": pobierz_csrf_token(klient)},
     )
     assert odpowiedz.status_code == 302
     assert odpowiedz.headers["Location"] == "/admin"

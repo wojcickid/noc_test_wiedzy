@@ -1,0 +1,92 @@
+{% set klasa_body = "admin" %}
+{% extends "base.html" %}
+{% block tytul %}Maile — {{ test.nazwa }}{% endblock %}
+{% block nav %}
+<nav class="admin-nav">
+    <a href="{{ url_for('admin_tokeny', test_id=test.id) }}">← Tokeny: {{ test.nazwa }}</a>
+    <a href="{{ url_for('admin_poczta') }}">Ustawienia poczty</a>
+    <form action="{{ url_for('admin_logout') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="wyloguj">Wyloguj</button>
+    </form>
+</nav>
+{% endblock %}
+{% block naglowek %}Maile do uczestników — {{ test.nazwa }}{% endblock %}
+{% block tresc %}
+{% include "_komunikaty.html" %}
+
+{% if blad_konfiguracji %}
+<p class="komunikat-blad">
+    Wysyłka z aplikacji jest wyłączona: {{ blad_konfiguracji }}
+    Szczegóły w <a href="{{ url_for('admin_poczta') }}">ustawieniach poczty</a>.
+    Korespondencja seryjna w Wordzie (niżej) działa bez tych ustawień.
+</p>
+{% endif %}
+{% if adres_lokalny %}
+<p class="komunikat-blad">
+    Uwaga: linki w mailach prowadzą do {{ ustawienia.adres_aplikacji }} — zadziałają tylko na tym komputerze.
+    Zmień adres aplikacji w <a href="{{ url_for('admin_poczta') }}">ustawieniach poczty</a>.
+</p>
+{% endif %}
+
+<h2>Wysyłka</h2>
+<p>Tokeny z adresem e-mail: {{ z_emailem }}. Maile idą w tle, co {{ odstep }} s.</p>
+<div class="akcje-tokenow">
+    <form action="{{ url_for('admin_wyslij_maile', test_id=test.id) }}" method="post"
+          onsubmit="return confirm('Wysłać zaproszenia do {{ liczba_zaproszen }} os.?');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="rodzaj" value="zaproszenia">
+        <button type="submit"{% if blad_konfiguracji or not liczba_zaproszen %} disabled{% endif %}>Wyślij zaproszenia ({{ liczba_zaproszen }})</button>
+    </form>
+    <form action="{{ url_for('admin_wyslij_maile', test_id=test.id) }}" method="post"
+          onsubmit="return confirm('Wysłać przypomnienia do {{ liczba_przypomnien }} os.?');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="rodzaj" value="przypomnienia">
+        <button type="submit"{% if blad_konfiguracji or not liczba_przypomnien %} disabled{% endif %}>Wyślij przypomnienia ({{ liczba_przypomnien }})</button>
+    </form>
+</div>
+<p>
+    Zaproszenia idą tylko do osób, którym jeszcze nie wysłano maila; przypomnienia — do wszystkich, którzy nie
+    ukończyli testu. Ponowne zaproszenie do wybranych osób wyślesz z <a href="{{ url_for('admin_tokeny', test_id=test.id) }}">listy tokenów</a>
+    (zaznacz i „Wyślij zaproszenie do zaznaczonych”).
+</p>
+
+<h2>Szablony</h2>
+<form action="{{ url_for('admin_mail_testu', test_id=test.id) }}" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% for rodzaj, (kolumna_tematu, kolumna_tresci) in kolumny.items() %}
+    <h3>{{ 'Zaproszenie' if rodzaj == 'zaproszenie' else 'Przypomnienie' }}</h3>
+    <label for="{{ kolumna_tematu }}">Temat:</label>
+    <input type="text" id="{{ kolumna_tematu }}" name="{{ kolumna_tematu }}" value="{{ szablony[rodzaj].temat }}">
+    <label for="{{ kolumna_tresci }}">Treść:</label>
+    <textarea id="{{ kolumna_tresci }}" name="{{ kolumna_tresci }}" rows="14">{{ szablony[rodzaj].tresc }}</textarea>
+    <p><strong>Podgląd:</strong></p>
+    <div class="podglad-maila">
+        <p><strong>{{ szablony[rodzaj].podglad_temat }}</strong></p>
+        <pre>{{ szablony[rodzaj].podglad_tresc }}</pre>
+    </div>
+    {% endfor %}
+    <p>
+        Znaczniki (wpisz z nawiasami klamrowymi):
+        {% for znacznik, opis in znaczniki.items() %}<br><code>{{ '{' ~ znacznik ~ '}' }}</code> — {{ opis }}{% endfor %}
+    </p>
+    <p>Wyczyszczenie pola przywraca szablon domyślny.</p>
+    <button type="submit">Zapisz szablony</button>
+</form>
+
+<h2>Korespondencja seryjna w Wordzie</h2>
+<p>
+    Zamiast wysyłki z aplikacji można wysłać maile ze swojej skrzynki przez Worda — wymaga to klasycznego
+    Outlooka (desktopowego) ustawionego jako domyślny program pocztowy; nowy Outlook i Outlook w przeglądarce
+    tego nie obsługują.
+</p>
+<a class="btn" href="{{ url_for('admin_eksport_korespondencji', test_id=test.id) }}">Pobierz listę do korespondencji (.xlsx)</a>
+<ol>
+    <li>Plik zawiera osoby z adresem e-mail, które nie ukończyły testu (kolumny: imie, email, token, link, nazwa_testu, dostepny_do, limit_czasu).</li>
+    <li>W Wordzie: <em>Korespondencja → Rozpocznij korespondencję seryjną → Wiadomości e-mail</em>.</li>
+    <li><em>Wybierz adresatów → Użyj istniejącej listy…</em> → wskaż pobrany plik → arkusz „Korespondencja”.</li>
+    <li>Napisz treść i wstaw pola przez <em>Wstaw pole scalania</em> (np. imie, link, token).</li>
+    <li><em>Zakończ i scal → Wyślij wiadomości e-mail…</em>: „Do” = <strong>email</strong>, wpisz temat, format „Zwykły tekst”, OK.</li>
+    <li>Wysłane maile znajdziesz w „Elementach wysłanych” Outlooka. Aplikacja nie zapisuje statusu takiej wysyłki.</li>
+</ol>
+{% endblock %}

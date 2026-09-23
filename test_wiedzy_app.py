@@ -4,16 +4,21 @@ import csv
 import io
 import json
 import os
+import re
 import secrets
 from datetime import datetime, timedelta
 from functools import wraps
+from urllib.parse import urlsplit
 
 import openpyxl
+import openpyxl.styles
 from flask import Flask, abort, flash, redirect, render_template, request, send_file, session, url_for
 
+import poczta
 from db import (
     BladImportu,
     FORMAT_DATY,
+    MAKS_UCZESTNIKOW,
     TOLERANCJA_SEKUNDY,
     TRYBY_SZCZEGOLOW,
     TRYBY_WYNIKU,
@@ -25,14 +30,23 @@ from db import (
     kopia_bazy,
     losowy_kod,
     oblicz_termin,
+    opis_uczestnika,
+    parsuj_liste_uczestnikow,
+    pobierz_ustawienia_aplikacji,
     przypisz_token,
     resetuj_token,
     statystyki_pytan,
     szczegoly_podejsc_testu,
+    tokeny_do_wysylki,
     ustaw_zamkniecie_testu,
+    waliduj_uczestnika,
     wczytaj_i_zwaliduj_plik_pytan,
+    wczytaj_plik_uczestnikow,
     wygeneruj_tokeny,
+    zapisz_szablony_maili,
+    zapisz_ustawienia_aplikacji,
     zapisz_ustawienia_testu,
+    zapisz_wynik_wysylki,
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -91,6 +105,9 @@ def wczytaj_lub_utworz_haslo_admina():
 
 app = Flask(__name__)
 app.secret_key = wczytaj_lub_utworz_sekret()
+# Seria maili idzie w wątku w tle (Etap 6) — testy wyłączają to, żeby wysyłka
+# kończyła się jeszcze w trakcie żądania.
+app.config["WYSYLKA_W_TLE"] = True
 ADMIN_HASLO = wczytaj_lub_utworz_haslo_admina()
 
 inicjalizuj()
@@ -308,6 +325,8 @@ ETYKIETY_STATUSOW = {"wolny": "wolny", "w_trakcie": "w trakcie", "zakonczone": "
 app.jinja_env.globals["csrf_token"] = generuj_csrf_token
 app.jinja_env.globals["etykiety_statusow"] = ETYKIETY_STATUSOW
 app.jinja_env.filters["data_pl"] = sformatuj_date_pl
+# {{ wiersz|uczestnik }} — „Imię <email>” z wiersza mającego pola imie/email (L6).
+app.jinja_env.filters["uczestnik"] = lambda w: opis_uczestnika(w.get("imie"), w.get("email"))
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -330,7 +349,11 @@ def index():
         # dopiero kliknięcie „Rozpoczynam” na ekranie startowym w /test.
         session["token"] = token
         return redirect(url_for("test"))
-    return render_template("index.html")
+    # Link z maila (/?token=XXX) tylko wpisuje token w pole — uczestnik i tak
+    # klika „Rozpocznij test”, więc samo otwarcie linku (np. przez skaner
+    # antywirusowy poczty) niczego nie uruchamia.
+    token_z_linku = "".join(z for z in (request.args.get("token") or "").upper() if z.isalnum())[:20]
+    return render_template("index.html", token_z_linku=token_z_linku)
 
 
 @app.route("/test", methods=["GET", "POST"])
@@ -794,7 +817,7 @@ def admin_eksport_wynikow(test_id):
     zbiorczo = skoroszyt.active
     zbiorczo.title = "Zbiorczo"
     naglowki = [
-        "Token", "Uczestnik", "Status", "Rozpoczęto", "Zakończono", "Czas trwania",
+        "Token", "Imię", "E-mail", "Status", "Rozpoczęto", "Zakończono", "Czas trwania",
         "Poprawne", "Wszystkie", "Procent",
     ]
     if prog is not None:
@@ -804,46 +827,57 @@ def admin_eksport_wynikow(test_id):
         rozpoczeto = _data_z_bazy(w["data_rozpoczecia"])
         zakonczono = _data_z_bazy(w["data_wyslania"])
         wiersz = [
-            w["token"], w["przypisany"] or "", ETYKIETY_STATUSOW.get(w["status"], w["status"]),
+            w["token"], w["imie"] or "", w["email"] or "", ETYKIETY_STATUSOW.get(w["status"], w["status"]),
             rozpoczeto, zakonczono, (zakonczono - rozpoczeto) if rozpoczeto and zakonczono else None,
             w["poprawne"], w["wszystkie"], (w["procent"] or 0) / 100,
         ]
         if prog is not None:
             wiersz.append("zdał" if czy_zaliczony(w["procent"], prog) else "nie zdał")
         zbiorczo.append(wiersz)
-    for komorka in zbiorczo["D"][1:] + zbiorczo["E"][1:]:
+    for komorka in zbiorczo["E"][1:] + zbiorczo["F"][1:]:
         komorka.number_format = "DD.MM.YYYY HH:MM"
-    for komorka in zbiorczo["F"][1:]:
+    for komorka in zbiorczo["G"][1:]:
         komorka.number_format = "[h]:mm:ss"
-    for komorka in zbiorczo["I"][1:]:
+    for komorka in zbiorczo["J"][1:]:
         komorka.number_format = "0.0%"
 
     szczegolowo = skoroszyt.create_sheet("Szczegółowo")
     szczegolowo.append([
-        "Token", "Uczestnik", "Nr pytania", "Pytanie", "Odpowiedź uczestnika", "Poprawna odpowiedź", "Wynik",
+        "Token", "Imię", "E-mail", "Nr pytania", "Pytanie", "Odpowiedź uczestnika", "Poprawna odpowiedź", "Wynik",
     ])
     for w in szczegoly_podejsc_testu(test_id):
         szczegolowo.append([
-            w["token"], w["przypisany"] or "", w["numer"], w["tresc_pytania"],
-            f"{w['odpowiedz_uzytkownika']}) {w['tresc_odpowiedzi_uzytkownika']}"
-            if w["odpowiedz_uzytkownika"] else "brak odpowiedzi",
-            f"{w['poprawna_odpowiedz']}) {w['tresc_poprawnej_odpowiedzi']}",
+            w["token"], w["imie"] or "", w["email"] or "", w["numer"], w["tresc_pytania"],
+            _opis_odpowiedzi(w), f"{w['poprawna_odpowiedz']}) {w['tresc_poprawnej_odpowiedzi']}",
             "poprawna" if w["czy_poprawna"] else "błędna",
         ])
 
     for arkusz in (zbiorczo, szczegolowo):
         arkusz.freeze_panes = "A2"
-        for kolumna in arkusz.columns:
-            szerokosc = max(len(str(k.value)) if k.value is not None else 0 for k in kolumna)
-            arkusz.column_dimensions[kolumna[0].column_letter].width = min(max(szerokosc + 2, 10), 60)
+        _dopasuj_szerokosci(arkusz)
+    return _wyslij_xlsx(skoroszyt, _nazwa_pliku(test["nazwa"], "wyniki.xlsx"))
 
+
+def _opis_odpowiedzi(w):
+    if not w["odpowiedz_uzytkownika"]:
+        return "brak odpowiedzi"
+    return f"{w['odpowiedz_uzytkownika']}) {w['tresc_odpowiedzi_uzytkownika']}"
+
+
+def _dopasuj_szerokosci(arkusz, od_wiersza=1):
+    for kolumna in arkusz.iter_cols(min_row=od_wiersza):
+        szerokosc = max(len(str(k.value)) if k.value is not None else 0 for k in kolumna)
+        arkusz.column_dimensions[kolumna[0].column_letter].width = min(max(szerokosc + 2, 10), 60)
+
+
+def _wyslij_xlsx(skoroszyt, nazwa_pliku):
     bufor = io.BytesIO()
     skoroszyt.save(bufor)
     bufor.seek(0)
     return send_file(
         bufor,
         as_attachment=True,
-        download_name=_nazwa_pliku(test["nazwa"], "wyniki.xlsx"),
+        download_name=nazwa_pliku,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
@@ -890,30 +924,40 @@ def admin_tokeny(test_id):
         except ValueError:
             dlugosc = 8
         lista_tekst = (request.form.get("lista_uczestnikow") or "").strip()
+        plik = request.files.get("plik_uczestnikow")
 
         if dlugosc < 4 or dlugosc > 20:
             flash("Długość tokenu powinna być od 4 do 20 znaków.", "blad")
-        elif lista_tekst:
-            przypisania = [linia.strip() for linia in lista_tekst.splitlines() if linia.strip()]
-            if len(przypisania) > 500:
-                flash("Lista może zawierać maksymalnie 500 osób naraz.", "blad")
+        elif (plik and plik.filename) or lista_tekst:
+            if plik and plik.filename:
+                uczestnicy, bledy = wczytaj_plik_uczestnikow(plik.read(), plik.filename)
             else:
-                try:
-                    nowe_tokeny = wygeneruj_tokeny(test_id, len(przypisania), dlugosc, przypisania=przypisania)
-                except ValueError as e:
-                    flash(str(e), "blad")
-                else:
-                    # Zapisane w sesji i odczytane raz po przekierowaniu (Post/Redirect/Get,
-                    # B10) — bez tego F5 po wygenerowaniu tokenów tworzyłoby je ponownie.
-                    session["nowe_tokeny"] = nowe_tokeny
-                    flash(f"Wygenerowano {len(nowe_tokeny)} nowych, przypisanych tokenów.", "ok")
+                uczestnicy, bledy = parsuj_liste_uczestnikow(lista_tekst)
+            if bledy:
+                # Bez przekierowania — wklejona lista zostaje w polu do poprawienia
+                # (bywa za duża na ciasteczko sesji, więc nie przez PRG).
+                flash("Lista uczestników zawiera błędy — nie wygenerowano żadnego tokenu:", "blad")
+                for blad in bledy[:20]:
+                    flash(blad, "blad")
+                if len(bledy) > 20:
+                    flash(f"…i {len(bledy) - 20} kolejnych błędów.", "blad")
+                return _strona_tokenow(test, lista_uczestnikow=lista_tekst)
+            try:
+                nowe_tokeny = wygeneruj_tokeny(test_id, len(uczestnicy), dlugosc, uczestnicy=uczestnicy)
+            except ValueError as e:
+                flash(str(e), "blad")
+            else:
+                # Zapisane w sesji i odczytane raz po przekierowaniu (Post/Redirect/Get,
+                # B10) — bez tego F5 po wygenerowaniu tokenów tworzyłoby je ponownie.
+                session["nowe_tokeny"] = nowe_tokeny
+                flash(f"Wygenerowano {len(nowe_tokeny)} nowych, przypisanych tokenów.", "ok")
         else:
             try:
                 liczba = int(request.form.get("liczba", "0"))
             except ValueError:
                 liczba = 0
-            if liczba < 1 or liczba > 500:
-                flash("Podaj liczbę tokenów od 1 do 500 albo wklej listę uczestników.", "blad")
+            if liczba < 1 or liczba > MAKS_UCZESTNIKOW:
+                flash(f"Podaj liczbę tokenów od 1 do {MAKS_UCZESTNIKOW} albo wklej listę uczestników.", "blad")
             else:
                 try:
                     nowe_tokeny = wygeneruj_tokeny(test_id, liczba, dlugosc)
@@ -925,33 +969,42 @@ def admin_tokeny(test_id):
 
         return redirect(url_for("admin_tokeny", test_id=test_id))
 
-    nowe_tokeny = session.pop("nowe_tokeny", None)
+    return _strona_tokenow(test)
 
+
+def _tokeny_testu(test_id):
+    """Tokeny testu ze statusem (UI8: brak podejścia -> "wolny", inaczej
+    podejscia.status) i stanem wysyłki maili, najnowsze na górze."""
     with baza() as conn:
-        # Status tokenu (UI8): brak podejścia -> "wolny", w_trakcie/zakonczone
-        # wprost z podejscia.status.
-        tokeny = conn.execute(
-            """
-            SELECT
-                tk.token, tk.wykorzystany, tk.data_utworzenia, tk.data_wykorzystania, tk.przypisany,
-                COALESCE(pj.status, 'wolny') AS status
-            FROM tokeny tk
-            LEFT JOIN podejscia pj ON pj.token = tk.token
-            WHERE tk.test_id = ?
-            ORDER BY tk.data_utworzenia DESC
-            """,
-            (test_id,),
-        ).fetchall()
+        return [
+            dict(w)
+            for w in conn.execute(
+                """
+                SELECT
+                    tk.token, tk.wykorzystany, tk.data_utworzenia, tk.data_wykorzystania, tk.imie, tk.email,
+                    tk.mail_wyslany_at, tk.przypomnienie_wyslane_at, tk.mail_status, tk.mail_blad,
+                    COALESCE(pj.status, 'wolny') AS status
+                FROM tokeny tk
+                LEFT JOIN podejscia pj ON pj.token = tk.token
+                WHERE tk.test_id = ?
+                ORDER BY tk.data_utworzenia DESC, tk.token
+                """,
+                (test_id,),
+            ).fetchall()
+        ]
 
-    tokeny = [dict(t) for t in tokeny]
+
+def _strona_tokenow(test, lista_uczestnikow=""):
+    tokeny = _tokeny_testu(test["id"])
     return render_template(
         "admin_tokeny.html",
         test=dict(test),
         tokeny=tokeny,
-        nowe_tokeny=nowe_tokeny,
-        # Format „Kopiuj wszystkie” (UI9): uczestnik<TAB>token, linia na token —
-        # wkleja się do Excela jako dwie kolumny.
-        tekst_do_skopiowania="\n".join(f"{t['przypisany'] or ''}\t{t['token']}" for t in tokeny),
+        nowe_tokeny=session.pop("nowe_tokeny", None),
+        lista_uczestnikow=lista_uczestnikow,
+        # Format „Kopiuj wszystkie” (UI9): imię<TAB>e-mail<TAB>token, linia na
+        # token — wkleja się do Excela jako trzy kolumny.
+        tekst_do_skopiowania="\n".join(f"{t['imie'] or ''}\t{t['email'] or ''}\t{t['token']}" for t in tokeny),
     )
 
 
@@ -966,22 +1019,11 @@ def admin_eksport_tokenow(test_id):
         if test is None:
             flash("Nie znaleziono testu.", "blad")
             return redirect(url_for("admin_panel"))
-        tokeny = conn.execute(
-            """
-            SELECT tk.token, tk.przypisany, COALESCE(pj.status, 'wolny') AS status
-            FROM tokeny tk
-            LEFT JOIN podejscia pj ON pj.token = tk.token
-            WHERE tk.test_id = ?
-            ORDER BY tk.data_utworzenia DESC
-            """,
-            (test_id,),
-        ).fetchall()
-
     bufor = io.StringIO()
     zapis = csv.writer(bufor, delimiter=";", lineterminator="\r\n")
-    zapis.writerow(["token", "przypisany", "status"])
-    for t in tokeny:
-        zapis.writerow([t["token"], t["przypisany"] or "", ETYKIETY_STATUSOW.get(t["status"], t["status"])])
+    zapis.writerow(["token", "imie", "email", "status"])
+    for t in _tokeny_testu(test_id):
+        zapis.writerow([t["token"], t["imie"] or "", t["email"] or "", ETYKIETY_STATUSOW.get(t["status"], t["status"])])
     return send_file(
         io.BytesIO(bufor.getvalue().encode("utf-8-sig")),
         as_attachment=True,
@@ -1112,16 +1154,7 @@ def admin_reset_token(token):
     return redirect(url_for("admin_panel"))
 
 
-@app.route("/admin/tokeny/<token>/przypisz", methods=["POST"])
-@wymaga_admina
-@csrf_chroniony
-def admin_przypisz_token(token):
-    przypisany = (request.form.get("przypisany") or "").strip()
-    test_id = request.form.get("test_id")
-    if przypisz_token(token, przypisany):
-        flash(f"Zapisano przypisanie dla tokenu {token}.", "ok")
-    else:
-        flash("Nie znaleziono tokenu.", "blad")
+def _powrot_do_tokenow(test_id):
     # test_id musi być liczbą, inaczej url_for rzuciłby błąd budowania adresu
     # dla nieliczbowego wejścia w polu ukrytym formularza (B15).
     if test_id and test_id.isdigit():
@@ -1129,29 +1162,422 @@ def admin_przypisz_token(token):
     return redirect(url_for("admin_panel"))
 
 
+@app.route("/admin/tokeny/<token>/przypisz", methods=["POST"])
+@wymaga_admina
+@csrf_chroniony
+def admin_przypisz_token(token):
+    test_id = request.form.get("test_id")
+    imie_tekst = request.form.get("imie") or ""
+    email_tekst = request.form.get("email") or ""
+    imie = email = None
+    # Oba pola puste = odpięcie osoby od tokenu (token znów anonimowy).
+    if imie_tekst.strip() or email_tekst.strip():
+        try:
+            imie, email = waliduj_uczestnika(imie_tekst, email_tekst)
+        except ValueError as e:
+            flash(f"Nie zapisano przypisania tokenu {token}: {e}.", "blad")
+            return _powrot_do_tokenow(test_id)
+    if przypisz_token(token, imie, email):
+        flash(f"Zapisano przypisanie dla tokenu {token}.", "ok")
+    else:
+        flash("Nie znaleziono tokenu.", "blad")
+    return _powrot_do_tokenow(test_id)
+
+
+def _dane_tokenu(token):
+    """Token z danymi osoby, testu i podejścia (None, jeśli nie ma tokenu)."""
+    with baza() as conn:
+        wiersz = conn.execute(
+            """
+            SELECT tk.token, tk.imie, tk.email, tk.test_id, t.nazwa AS nazwa_testu, t.prog_zaliczenia,
+                   pj.status, pj.liczba_pytan, pj.data_rozpoczecia, pj.data_zakonczenia
+            FROM tokeny tk
+            JOIN testy t ON t.id = tk.test_id
+            LEFT JOIN podejscia pj ON pj.token = tk.token
+            WHERE tk.token = ?
+            """,
+            (token,),
+        ).fetchone()
+    return dict(wiersz) if wiersz else None
+
+
+def _brak_wynikow_tokenu(dane):
+    flash("Brak wyników dla tego tokenu — test mógł nie zostać jeszcze ukończony.", "info")
+    # Wracamy do listy tokenów właściwego testu zamiast do panelu głównego,
+    # bo stąd zwykle wchodzi się z listy tokenów konkretnego testu (B20).
+    if dane:
+        return redirect(url_for("admin_tokeny", test_id=dane["test_id"]))
+    return redirect(url_for("admin_panel"))
+
+
 @app.route("/admin/tokeny/<token>")
 @wymaga_admina
 def admin_token_szczegoly(token):
+    domknij_przeterminowane_podejscia()
+    dane = _dane_tokenu(token)
     with baza() as conn:
-        token_wiersz = conn.execute("SELECT przypisany, test_id FROM tokeny WHERE token = ?", (token,)).fetchone()
         wiersze = conn.execute("SELECT * FROM arkusz_wynikow WHERE token = ?", (token,)).fetchall()
-    if not wiersze:
-        flash("Brak wyników dla tego tokenu — test mógł nie zostać jeszcze ukończony.", "info")
-        # Wracamy do listy tokenów właściwego testu zamiast do panelu głównego,
-        # bo stąd zwykle wchodzi się z listy tokenów konkretnego testu (B20).
-        if token_wiersz:
-            return redirect(url_for("admin_tokeny", test_id=token_wiersz["test_id"]))
-        return redirect(url_for("admin_panel"))
+    if not wiersze or dane is None:
+        return _brak_wynikow_tokenu(dane)
     szczegoly = [dict(w) for w in wiersze]
     poprawne = sum(1 for w in szczegoly if w["odpowiedz_uzytkownika"] == w["poprawna_odpowiedz"])
+    # Mianownik z podejścia (L3), jak w /wynik i /sprawdz-wynik — przy „czas
+    # minął” liczba udzielonych odpowiedzi jest mniejsza niż liczba pytań.
+    wszystkie = dane["liczba_pytan"] or len(szczegoly)
+    procent = round(100 * poprawne / wszystkie, 1) if wszystkie else 0
     return render_template(
         "admin_token_szczegoly.html",
         token=token,
-        przypisany=token_wiersz["przypisany"] if token_wiersz else None,
+        dane=dane,
         szczegoly=szczegoly,
         poprawne=poprawne,
-        wszystkie=len(szczegoly),
+        wszystkie=wszystkie,
+        procent=procent,
+        zaliczony=czy_zaliczony(procent, dane["prog_zaliczenia"]),
     )
+
+
+@app.route("/admin/tokeny/<token>/wynik.xlsx")
+@wymaga_admina
+def admin_eksport_wyniku_tokenu(token):
+    """Wynik jednej osoby do XLSX (Etap 6) — np. do przekazania uczestnikowi
+    albo do akt: nagłówek z danymi i wynikiem, pod nim pytanie po pytaniu."""
+    domknij_przeterminowane_podejscia()
+    dane = _dane_tokenu(token)
+    if dane is None or dane["status"] not in ("zakonczone", "czas_minal"):
+        return _brak_wynikow_tokenu(dane)
+    pytania = szczegoly_podejsc_testu(dane["test_id"], token=token)
+    poprawne = sum(1 for w in pytania if w["czy_poprawna"])
+    wszystkie = dane["liczba_pytan"] or len(pytania)
+    procent = round(100 * poprawne / wszystkie, 1) if wszystkie else 0
+    rozpoczeto = _data_z_bazy(dane["data_rozpoczecia"])
+    zakonczono = _data_z_bazy(dane["data_zakonczenia"])
+
+    skoroszyt = openpyxl.Workbook()
+    arkusz = skoroszyt.active
+    arkusz.title = "Wynik"
+    naglowek = [
+        ("Test", dane["nazwa_testu"]),
+        ("Imię", dane["imie"] or ""),
+        ("E-mail", dane["email"] or ""),
+        ("Token", token),
+        ("Status", ETYKIETY_STATUSOW.get(dane["status"], dane["status"])),
+        ("Rozpoczęto", rozpoczeto),
+        ("Zakończono", zakonczono),
+        ("Czas trwania", (zakonczono - rozpoczeto) if rozpoczeto and zakonczono else None),
+        ("Wynik", f"{poprawne} / {wszystkie}"),
+        ("Procent", procent / 100),
+    ]
+    if dane["prog_zaliczenia"] is not None:
+        zaliczony = czy_zaliczony(procent, dane["prog_zaliczenia"])
+        naglowek.append(("Zaliczenie", f"{'zdał' if zaliczony else 'nie zdał'} (próg {dane['prog_zaliczenia']}%)"))
+    for etykieta, wartosc in naglowek:
+        arkusz.append([etykieta, wartosc])
+        arkusz.cell(arkusz.max_row, 1).font = openpyxl.styles.Font(bold=True)
+    arkusz["B6"].number_format = arkusz["B7"].number_format = "DD.MM.YYYY HH:MM"
+    arkusz["B8"].number_format = "[h]:mm:ss"
+    arkusz["B10"].number_format = "0.0%"
+    for komorka in ("B6", "B7", "B8", "B9", "B10"):
+        arkusz[komorka].alignment = openpyxl.styles.Alignment(horizontal="left")
+
+    arkusz.append([])
+    arkusz.append(["Nr", "Pytanie", "Odpowiedź uczestnika", "Poprawna odpowiedź", "Wynik", "Wyjaśnienie"])
+    wiersz_tabeli = arkusz.max_row
+    for komorka in arkusz[wiersz_tabeli]:
+        komorka.font = openpyxl.styles.Font(bold=True)
+    for w in pytania:
+        arkusz.append([
+            w["numer"], w["tresc_pytania"], _opis_odpowiedzi(w),
+            f"{w['poprawna_odpowiedz']}) {w['tresc_poprawnej_odpowiedzi']}",
+            "poprawna" if w["czy_poprawna"] else "błędna", w["wyjasnienie"] or "",
+        ])
+    _dopasuj_szerokosci(arkusz, od_wiersza=wiersz_tabeli)
+    arkusz.column_dimensions["A"].width = 14
+    for wiersz in arkusz.iter_rows(min_row=wiersz_tabeli + 1):
+        for komorka in wiersz:
+            komorka.alignment = openpyxl.styles.Alignment(wrap_text=True, vertical="top")
+
+    nazwa = f"{dane['nazwa_testu']} {dane['imie']}" if dane["imie"] else dane["nazwa_testu"]
+    return _wyslij_xlsx(skoroszyt, _nazwa_pliku(nazwa, f"wynik_{token}.xlsx"))
+
+
+# --- Maile do uczestników (Etap 6: F3, E6, korespondencja seryjna) --------------------
+
+def _normalizuj_adres_aplikacji(tekst):
+    """Adres, pod którym uczestnicy otwierają aplikację (do linków w mailach)
+    — dopisuje http://, jeśli admin wpisał samo `serwer:5555`."""
+    adres = (tekst or "").strip().rstrip("/")
+    if not re.match(r"^https?://", adres, re.IGNORECASE):
+        adres = "http://" + adres
+    if not re.match(r"^https?://[A-Za-z0-9.\-]+(:\d{1,5})?(/\S*)?$", adres):
+        raise ValueError
+    return adres
+
+
+def _adres_lokalny(adres):
+    return urlsplit(adres).hostname in ("localhost", "127.0.0.1", "::1")
+
+
+def _dane_do_szablonu(test, odbiorca, ustawienia):
+    return {
+        "imie": odbiorca["imie"] or "",
+        "token": odbiorca["token"],
+        "link": f"{ustawienia['adres_aplikacji']}/?token={odbiorca['token']}",
+        "nazwa_testu": test["nazwa"],
+        "dostepny_do": sformatuj_date_pl(test["dostepny_do"]) if test["dostepny_do"] else "bez terminu",
+        "limit_czasu": f"{test['limit_czasu_min']} min" if test["limit_czasu_min"] else "bez limitu czasu",
+        "nazwa_nadawcy": ustawienia["nazwa_nadawcy"],
+    }
+
+
+# Kolumny testy.* z szablonami — rodzaj szablonu -> (kolumna tematu, kolumna treści).
+KOLUMNY_SZABLONOW = {
+    "zaproszenie": ("mail_temat", "mail_tresc"),
+    "przypomnienie": ("przypomnienie_temat", "przypomnienie_tresc"),
+}
+
+
+def _szablon_testu(test, rodzaj):
+    """(temat, treść) szablonu testu — własny albo domyślny, gdy NULL."""
+    kolumna_tematu, kolumna_tresci = KOLUMNY_SZABLONOW[rodzaj]
+    domyslny = poczta.DOMYSLNE_SZABLONY[rodzaj]
+    return test[kolumna_tematu] or domyslny["temat"], test[kolumna_tresci] or domyslny["tresc"]
+
+
+def _pobierz_test(test_id):
+    with baza() as conn:
+        test = conn.execute("SELECT * FROM testy WHERE id = ?", (test_id,)).fetchone()
+    return dict(test) if test else None
+
+
+@app.route("/admin/poczta", methods=["GET", "POST"])
+@wymaga_admina
+@csrf_chroniony
+def admin_poczta():
+    """Ustawienia poczty (F3): podgląd config.json bez hasła, nazwa nadawcy
+    i adres aplikacji do linków (w bazie), mail testowy."""
+    if request.method == "POST":
+        nazwa_nadawcy = " ".join((request.form.get("nazwa_nadawcy") or "").split())
+        if not nazwa_nadawcy or len(nazwa_nadawcy) > 100:
+            flash("Podaj nazwę nadawcy (maksymalnie 100 znaków).", "blad")
+            return redirect(url_for("admin_poczta"))
+        try:
+            adres_aplikacji = _normalizuj_adres_aplikacji(request.form.get("adres_aplikacji"))
+        except ValueError:
+            flash("Nieprawidłowy adres aplikacji — wpisz np. http://192.168.1.10:5555 albo http://serwer:5555.", "blad")
+            return redirect(url_for("admin_poczta"))
+        zapisz_ustawienia_aplikacji(nazwa_nadawcy=nazwa_nadawcy, adres_aplikacji=adres_aplikacji)
+        flash("Zapisano ustawienia poczty.", "ok")
+        return redirect(url_for("admin_poczta"))
+
+    konfiguracja, blad_konfiguracji = poczta.podglad_konfiguracji()
+    ustawienia = pobierz_ustawienia_aplikacji()
+    return render_template(
+        "admin_poczta.html",
+        konfiguracja=konfiguracja,
+        blad_konfiguracji=blad_konfiguracji,
+        ustawienia=ustawienia,
+        adres_lokalny=_adres_lokalny(ustawienia["adres_aplikacji"]),
+    )
+
+
+@app.route("/admin/poczta/test", methods=["POST"])
+@wymaga_admina
+@csrf_chroniony
+def admin_poczta_test():
+    try:
+        _, adres = waliduj_uczestnika(None, request.form.get("adres"))
+        if adres is None:
+            raise ValueError("podaj adres e-mail")
+    except ValueError as e:
+        flash(f"Nie wysłano maila testowego: {e}.", "blad")
+        return redirect(url_for("admin_poczta"))
+    try:
+        konfiguracja = poczta.wczytaj_konfiguracje()
+        poczta.wyslij_mail_testowy(konfiguracja, pobierz_ustawienia_aplikacji()["nazwa_nadawcy"], adres)
+    except poczta.BladPoczty as e:
+        flash(str(e), "blad")
+    else:
+        flash(f"Wysłano mail testowy na {adres} — sprawdź skrzynkę (także folder spam).", "ok")
+    return redirect(url_for("admin_poczta"))
+
+
+def _pola_szablonow_z_formularza():
+    """Szablony z formularza: {kolumna: tekst}. Tekst równy domyślnemu albo
+    pusty zapisujemy jako NULL — test korzysta wtedy z szablonu domyślnego
+    (także po jego ewentualnej zmianie w nowszej wersji aplikacji)."""
+    pola = {}
+    for rodzaj, (kolumna_tematu, kolumna_tresci) in KOLUMNY_SZABLONOW.items():
+        domyslny = poczta.DOMYSLNE_SZABLONY[rodzaj]
+        temat = " ".join((request.form.get(kolumna_tematu) or "").split())
+        tresc = (request.form.get(kolumna_tresci) or "").replace("\r\n", "\n").strip()
+        pola[kolumna_tematu] = temat if temat and temat != domyslny["temat"] else None
+        pola[kolumna_tresci] = tresc if tresc and tresc != domyslny["tresc"].strip() else None
+    return pola
+
+
+@app.route("/admin/testy/<int:test_id>/mail", methods=["GET", "POST"])
+@wymaga_admina
+@csrf_chroniony
+def admin_mail_testu(test_id):
+    """Maile do uczestników testu: szablony z podglądem, wysyłka zaproszeń
+    i przypomnień (E6) oraz eksport do korespondencji seryjnej w Wordzie."""
+    domknij_przeterminowane_podejscia(test_id)
+    test = _pobierz_test(test_id)
+    if test is None:
+        flash("Nie znaleziono testu.", "blad")
+        return redirect(url_for("admin_panel"))
+
+    if request.method == "POST":
+        pola = _pola_szablonow_z_formularza()
+        nieznane = sorted({z for wartosc in pola.values() if wartosc for z in poczta.nieznane_znaczniki(wartosc)})
+        if nieznane:
+            flash(
+                "Nie zapisano — nieznane znaczniki: " + ", ".join("{" + z + "}" for z in nieznane)
+                + ". Dozwolone są tylko znaczniki z listy pod formularzem.",
+                "blad",
+            )
+            # Bez przekierowania, żeby nie stracić wpisanego tekstu.
+            return _strona_maili(dict(test, **pola))
+        zapisz_szablony_maili(test_id, **pola)
+        flash("Zapisano szablony maili.", "ok")
+        return redirect(url_for("admin_mail_testu", test_id=test_id))
+    return _strona_maili(test)
+
+
+def _strona_maili(test):
+    ustawienia = pobierz_ustawienia_aplikacji()
+    zaproszenia = tokeny_do_wysylki(test["id"], "zaproszenia")
+    przypomnienia = tokeny_do_wysylki(test["id"], "przypomnienia")
+    with baza() as conn:
+        z_emailem = conn.execute(
+            "SELECT COUNT(*) FROM tokeny WHERE test_id = ? AND email IS NOT NULL", (test["id"],)
+        ).fetchone()[0]
+    # Podgląd na pierwszym odbiorcy z listy albo na przykładowych danych.
+    przyklad = (zaproszenia or przypomnienia or [{"token": "ABCD2345", "imie": "Jan Kowalski", "email": None}])[0]
+    dane = _dane_do_szablonu(test, przyklad, ustawienia)
+    szablony = {}
+    for rodzaj in KOLUMNY_SZABLONOW:
+        temat, tresc = _szablon_testu(test, rodzaj)
+        szablony[rodzaj] = {
+            "temat": temat,
+            "tresc": tresc,
+            "podglad_temat": poczta.wypelnij_szablon(temat, dane),
+            "podglad_tresc": poczta.wypelnij_szablon(tresc, dane),
+        }
+    _, blad_konfiguracji = poczta.podglad_konfiguracji()
+    return render_template(
+        "admin_mail.html",
+        test=test,
+        szablony=szablony,
+        kolumny=KOLUMNY_SZABLONOW,
+        znaczniki=poczta.ZNACZNIKI,
+        z_emailem=z_emailem,
+        liczba_zaproszen=len(zaproszenia),
+        liczba_przypomnien=len(przypomnienia),
+        blad_konfiguracji=blad_konfiguracji,
+        ustawienia=ustawienia,
+        adres_lokalny=_adres_lokalny(ustawienia["adres_aplikacji"]),
+        odstep=poczta.ODSTEP_SEKUNDY,
+    )
+
+
+@app.route("/admin/testy/<int:test_id>/wyslij", methods=["POST"])
+@wymaga_admina
+@csrf_chroniony
+def admin_wyslij_maile(test_id):
+    """Start serii maili: zaproszenia do niewysłanych, przypomnienia do
+    nieukończonych (E6) albo zaproszenia do tokenów zaznaczonych na liście."""
+    domknij_przeterminowane_podejscia(test_id)
+    test = _pobierz_test(test_id)
+    if test is None:
+        flash("Nie znaleziono testu.", "blad")
+        return redirect(url_for("admin_panel"))
+    rodzaj = request.form.get("rodzaj")
+    if rodzaj == "zaznaczone":
+        powrot = redirect(url_for("admin_tokeny", test_id=test_id))
+    else:
+        powrot = redirect(url_for("admin_mail_testu", test_id=test_id))
+    if rodzaj not in ("zaproszenia", "przypomnienia", "zaznaczone"):
+        flash("Nieznany rodzaj wysyłki.", "blad")
+        return powrot
+
+    odbiorcy = tokeny_do_wysylki(test_id, rodzaj, request.form.getlist("tokeny"))
+    if not odbiorcy:
+        flash(
+            "Zaznacz tokeny z adresem e-mail." if rodzaj == "zaznaczone" else "Brak odbiorców dla tej wysyłki.",
+            "info",
+        )
+        return powrot
+    try:
+        konfiguracja = poczta.wczytaj_konfiguracje()
+    except poczta.BladPoczty as e:
+        flash(str(e), "blad")
+        return powrot
+
+    ustawienia = pobierz_ustawienia_aplikacji()
+    przypomnienie = rodzaj == "przypomnienia"
+    temat, tresc = _szablon_testu(test, "przypomnienie" if przypomnienie else "zaproszenie")
+    zadania = []
+    for odbiorca in odbiorcy:
+        dane = _dane_do_szablonu(test, odbiorca, ustawienia)
+        wiadomosc = poczta.zbuduj_wiadomosc(
+            konfiguracja, ustawienia["nazwa_nadawcy"], odbiorca["email"],
+            poczta.wypelnij_szablon(temat, dane), poczta.wypelnij_szablon(tresc, dane),
+        )
+        zadania.append({"token": odbiorca["token"], "adres": odbiorca["email"], "wiadomosc": wiadomosc})
+
+    opis = f"{'Przypomnienia' if przypomnienie else 'Zaproszenia'} — {test['nazwa']}"
+    try:
+        id_wysylki = poczta.rozpocznij_wysylke(
+            konfiguracja, opis, zadania,
+            lambda token, blad: zapisz_wynik_wysylki(token, przypomnienie, blad),
+            w_tle=app.config["WYSYLKA_W_TLE"],
+        )
+    except poczta.BladPoczty as e:
+        flash(str(e), "blad")
+        return powrot
+    return redirect(url_for("admin_wysylka", id_wysylki=id_wysylki, test_id=test_id))
+
+
+@app.route("/admin/wysylki/<id_wysylki>")
+@wymaga_admina
+def admin_wysylka(id_wysylki):
+    """Postęp serii maili — strona odświeża się sama, dopóki seria trwa."""
+    stan = poczta.stan_wysylki(id_wysylki)
+    test_id = request.args.get("test_id", type=int)
+    if stan is None:
+        # Stan jest tylko w pamięci — po restarcie serwera zostają statusy w bazie.
+        flash("Nie znaleziono tej wysyłki (np. po restarcie serwera) — statusy maili są na liście tokenów.", "info")
+        return redirect(url_for("admin_tokeny", test_id=test_id) if test_id else url_for("admin_panel"))
+    return render_template("admin_wysylka.html", stan=stan, test_id=test_id)
+
+
+@app.route("/admin/testy/<int:test_id>/korespondencja.xlsx")
+@wymaga_admina
+def admin_eksport_korespondencji(test_id):
+    """Źródło danych do korespondencji seryjnej w Wordzie (Etap 6) — osoby
+    z adresem, które jeszcze nie ukończyły testu; nazwy kolumn bez polskich
+    znaków, bo tak najpewniej działają jako pola scalania."""
+    domknij_przeterminowane_podejscia(test_id)
+    test = _pobierz_test(test_id)
+    if test is None:
+        flash("Nie znaleziono testu.", "blad")
+        return redirect(url_for("admin_panel"))
+    ustawienia = pobierz_ustawienia_aplikacji()
+    kolumny = ["imie", "email", "token", "link", "nazwa_testu", "dostepny_do", "limit_czasu"]
+
+    skoroszyt = openpyxl.Workbook()
+    arkusz = skoroszyt.active
+    arkusz.title = "Korespondencja"
+    arkusz.append(kolumny)
+    for odbiorca in tokeny_do_wysylki(test_id, "przypomnienia"):
+        dane = _dane_do_szablonu(test, odbiorca, ustawienia)
+        dane["email"] = odbiorca["email"]
+        arkusz.append([dane[k] for k in kolumny])
+    arkusz.freeze_panes = "A2"
+    _dopasuj_szerokosci(arkusz)
+    return _wyslij_xlsx(skoroszyt, _nazwa_pliku(test["nazwa"], "korespondencja.xlsx"))
 
 
 if __name__ == "__main__":

@@ -113,7 +113,7 @@ def test_przypisanie_tokenu_mozna_zmienic(klient, haslo_admina, test_z_pytaniami
 
     odpowiedz = klient.post(
         f"/admin/tokeny/{token}/przypisz",
-        data={"przypisany": "Nowa Osoba", "test_id": str(test_z_pytaniami), "csrf_token": pobierz_csrf_token(klient)},
+        data={"imie": "Nowa Osoba", "email": "", "test_id": str(test_z_pytaniami), "csrf_token": pobierz_csrf_token(klient)},
         follow_redirects=True,
     )
     assert "Zapisano przypisanie".encode("utf-8") in odpowiedz.data

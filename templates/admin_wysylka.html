@@ -1,0 +1,48 @@
+{% set klasa_body = "admin" %}
+{% extends "base.html" %}
+{% block glowa %}{% if not stan.zakonczona %}<meta http-equiv="refresh" content="2">{% endif %}{% endblock %}
+{% block tytul %}Wysyłka maili — panel administracyjny{% endblock %}
+{% block nav %}
+<nav class="admin-nav">
+    {% if test_id %}
+    <a href="{{ url_for('admin_tokeny', test_id=test_id) }}">← Tokeny</a>
+    {% else %}
+    <a href="{{ url_for('admin_panel') }}">← Panel</a>
+    {% endif %}
+    <form action="{{ url_for('admin_logout') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="wyloguj">Wyloguj</button>
+    </form>
+</nav>
+{% endblock %}
+{% block naglowek %}{{ stan.opis }}{% endblock %}
+{% block tresc %}
+{% include "_komunikaty.html" %}
+<p>
+    {% if stan.zakonczona %}<strong>Wysyłka zakończona.</strong>{% else %}<strong>Trwa wysyłka…</strong> (strona odświeża się sama; można ją zamknąć — wysyłka idzie dalej w tle){% endif %}
+    Wysłane: <strong>{{ stan.wyslane }}</strong> &middot; Błędy: <strong>{{ stan.bledy }}</strong> &middot; Wszystkie: {{ stan.wszystkie }}
+</p>
+<div class="pasek-postepu"><div class="pasek-postepu-wypelnienie" style="width: {{ ((stan.wyslane + stan.bledy) * 100 / stan.wszystkie)|round|int if stan.wszystkie else 100 }}%"></div></div>
+{% if stan.blad_ogolny %}
+<p class="komunikat-blad">{{ stan.blad_ogolny }}</p>
+{% endif %}
+{% if stan.zakonczona %}
+<p>
+    „Wysłany” znaczy, że serwer poczty nadawcy przyjął wiadomość. Jeśli adres odbiorcy nie istnieje, zwrotka
+    („Mail Delivery Subsystem” / „Undeliverable”) przyjdzie później na skrzynkę nadawcy — aplikacja jej nie widzi,
+    więc warto tam zajrzeć po wysyłce.
+</p>
+{% endif %}
+<table class="szczegoly">
+    <thead><tr><th>Token</th><th>Adres</th><th>Status</th></tr></thead>
+    <tbody>
+        {% for p in stan.pozycje %}
+        <tr class="{{ 'ok' if p.status == 'wyslany' else ('zle' if p.status == 'blad' else '') }}">
+            <td>{{ p.token }}</td>
+            <td>{{ p.adres }}</td>
+            <td>{{ {'wyslany': 'wysłany', 'blad': 'błąd', 'czeka': 'czeka'}[p.status] }}{% if p.blad %}: {{ p.blad }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

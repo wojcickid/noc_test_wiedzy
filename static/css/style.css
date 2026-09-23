@@ -289,3 +289,52 @@ table.szczegoly td.wybor-poprawny {
     font-weight: bold;
     background-color: #e6f4ea;
 }
+/* Etap 6: formularze-przyciski w pasku akcji bez ramki formularza. */
+form.akcje-tokenow,
+.akcje-tokenow form {
+    background: none;
+    border: none;
+    padding: 0;
+}
+.akcje-tokenow form {
+    margin: 0;
+}
+label.w-linii {
+    display: inline;
+    margin: 0;
+    font-weight: normal;
+}
+label.w-linii input,
+table.szczegoly input[type="checkbox"] {
+    width: auto;
+    margin: 0 4px 0 0;
+}
+form.przypisz input[type="text"] {
+    min-width: 8em;
+}
+table.szczegoly td.status-maila {
+    font-size: 0.85em;
+}
+.podglad-maila {
+    background-color: #fff;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    padding: 10px 15px;
+    margin-top: 5px;
+}
+.podglad-maila pre {
+    white-space: pre-wrap;
+    font-family: inherit;
+    margin: 0;
+}
+.pasek-postepu {
+    background-color: #e9ecef;
+    border-radius: 5px;
+    height: 12px;
+    margin: 10px 0;
+}
+.pasek-postepu-wypelnienie {
+    background-color: #28a745;
+    border-radius: 5px;
+    height: 100%;
+}

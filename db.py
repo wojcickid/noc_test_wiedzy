@@ -1,8 +1,10 @@
 """Wspólny dostęp do bazy SQLite używany przez aplikację i skrypty pomocnicze."""
 
+import csv
 import io
 import json
 import os
+import re
 import secrets
 import sqlite3
 import string
@@ -45,7 +47,11 @@ CREATE TABLE IF NOT EXISTS testy (
     dostepny_od TEXT,
     dostepny_do TEXT,
     zamkniety INTEGER NOT NULL DEFAULT 0,
-    prog_zaliczenia INTEGER DEFAULT 80
+    prog_zaliczenia INTEGER DEFAULT 80,
+    mail_temat TEXT,
+    mail_tresc TEXT,
+    przypomnienie_temat TEXT,
+    przypomnienie_tresc TEXT
 );
 
 CREATE TABLE IF NOT EXISTS pytania (
@@ -66,7 +72,20 @@ CREATE TABLE IF NOT EXISTS tokeny (
     wykorzystany INTEGER NOT NULL DEFAULT 0,
     data_utworzenia TEXT NOT NULL,
     data_wykorzystania TEXT,
-    przypisany TEXT
+    imie TEXT,
+    email TEXT,
+    mail_wyslany_at TEXT,
+    przypomnienie_wyslane_at TEXT,
+    mail_status TEXT,
+    mail_blad TEXT
+);
+
+-- Ustawienia całej instalacji edytowane w panelu (Etap 6): nazwa nadawcy
+-- maili i adres aplikacji do linków. Dane logowania SMTP są celowo poza bazą
+-- (config.json), żeby hasło nie trafiło do kopii bazy pobieranej z panelu.
+CREATE TABLE IF NOT EXISTS ustawienia_aplikacji (
+    klucz TEXT PRIMARY KEY,
+    wartosc TEXT
 );
 
 CREATE TABLE IF NOT EXISTS odpowiedzi_uzytkownika (
@@ -140,7 +159,8 @@ DROP VIEW IF EXISTS zbiorcze_wyniki;
 CREATE VIEW zbiorcze_wyniki AS
 SELECT
     pj.token AS token,
-    tk.przypisany AS przypisany,
+    tk.imie AS imie,
+    tk.email AS email,
     t.id AS test_id,
     t.nazwa AS test,
     pj.liczba_pytan AS wszystkie,
@@ -170,9 +190,23 @@ def _migruj_tabele(conn):
     """Dodaje kolumny do już istniejących baz, jeśli schemat ewoluował od czasu
     ich utworzenia — tabele (w przeciwieństwie do widoków) trzymają dane, więc
     nie można ich po prostu odtworzyć od nowa."""
+    # Etap 6 (L6) — osobne kolumny imie/email zamiast jednego pola `przypisany`
+    # oraz stan wysyłki maili. Stara kolumna `przypisany` zostaje w starych
+    # bazach (SQLite nie usuwa kolumn bez przebudowy tabeli), ale nie jest już
+    # używana — jej zawartość jest jednorazowo rozdzielana na imie/email.
     kolumny_tokeny = {w["name"] for w in conn.execute("PRAGMA table_info(tokeny)").fetchall()}
-    if "przypisany" not in kolumny_tokeny:
-        conn.execute("ALTER TABLE tokeny ADD COLUMN przypisany TEXT")
+    if "imie" not in kolumny_tokeny:
+        conn.execute("ALTER TABLE tokeny ADD COLUMN imie TEXT")
+        conn.execute("ALTER TABLE tokeny ADD COLUMN email TEXT")
+        if "przypisany" in kolumny_tokeny:
+            for wiersz in conn.execute(
+                "SELECT token, przypisany FROM tokeny WHERE przypisany IS NOT NULL AND TRIM(przypisany) != ''"
+            ).fetchall():
+                imie, email = _rozdziel_przypisanie(wiersz["przypisany"])
+                conn.execute("UPDATE tokeny SET imie = ?, email = ? WHERE token = ?", (imie, email, wiersz["token"]))
+    for kolumna in ("mail_wyslany_at", "przypomnienie_wyslane_at", "mail_status", "mail_blad"):
+        if kolumna not in kolumny_tokeny:
+            conn.execute(f"ALTER TABLE tokeny ADD COLUMN {kolumna} TEXT")
 
     kolumny_testy = {w["name"] for w in conn.execute("PRAGMA table_info(testy)").fetchall()}
     if "liczba_pytan_do_losowania" not in kolumny_testy:
@@ -203,6 +237,10 @@ def _migruj_tabele(conn):
     # 80% dostają też testy istniejące przed migracją (decyzja usera z Etapu 5).
     if "prog_zaliczenia" not in kolumny_testy:
         conn.execute("ALTER TABLE testy ADD COLUMN prog_zaliczenia INTEGER DEFAULT 80")
+    # Etap 6 (F3, E6) — własne szablony maili per test, NULL = szablon domyślny.
+    for kolumna in ("mail_temat", "mail_tresc", "przypomnienie_temat", "przypomnienie_tresc"):
+        if kolumna not in kolumny_testy:
+            conn.execute(f"ALTER TABLE testy ADD COLUMN {kolumna} TEXT")
 
     _odtworz_historyczne_podejscia(conn)
 
@@ -406,14 +444,158 @@ def importuj_pytania(nazwa_testu, pytania, liczba_pytan=20):
     return test_id, len(pytania), liczba_pytan
 
 
-def wygeneruj_tokeny(test_id, liczba, dlugosc=8, przypisania=None):
+# Celowo prosta walidacja adresu (L6): wyłapuje literówki typu brak @, spacja
+# czy przecinek w adresie. Czy skrzynka istnieje, wie dopiero serwer odbiorcy
+# — taki błąd wraca później jako zwrotka na skrzynkę nadawcy, nie do aplikacji.
+WZORZEC_EMAIL = re.compile(r"^[^@\s;,<>()\"']+@[^@\s;,<>()\"']+\.[^@\s;,<>()\"'.][^@\s;,<>()\"']*$")
+MAKS_DLUGOSC_IMIENIA = 200
+MAKS_DLUGOSC_EMAILA = 254
+MAKS_UCZESTNIKOW = 500
+
+NAGLOWKI_IMIENIA = {"imie", "imię", "imie i nazwisko", "imię i nazwisko", "uczestnik", "osoba", "nazwa"}
+NAGLOWKI_EMAILA = {"email", "e-mail", "mail", "adres e-mail", "adres email"}
+
+
+def waliduj_uczestnika(imie, email):
+    """Czyści i sprawdza parę (imię, e-mail) — zwraca ją z None zamiast
+    pustych napisów albo rzuca ValueError z czytelnym komunikatem."""
+    imie = " ".join((imie or "").split()) or None
+    email = (email or "").strip() or None
+    if imie is None and email is None:
+        raise ValueError("brak imienia i adresu e-mail")
+    if imie and len(imie) > MAKS_DLUGOSC_IMIENIA:
+        raise ValueError(f"imię dłuższe niż {MAKS_DLUGOSC_IMIENIA} znaków")
+    if email and (len(email) > MAKS_DLUGOSC_EMAILA or not WZORZEC_EMAIL.match(email)):
+        raise ValueError(f"nieprawidłowy adres e-mail '{email}'")
+    return imie, email
+
+
+def parsuj_uczestnika(linia):
+    """Jedna linia listy uczestników (L6) -> (imie, email). Przyjmuje
+    `Imię Nazwisko;email`, a także tabulator/przecinek jako separator, sam
+    e-mail, samo imię albo `Imię Nazwisko <email>` (format z Outlooka) —
+    adresem jest to słowo, które zawiera @. Rzuca ValueError przy błędzie."""
+    slowa = [s for s in re.split(r"[;,\t\s]+", linia.strip()) if s]
+    adresy = [s.strip("<>()\"'") for s in slowa if "@" in s]
+    imie = " ".join(s for s in slowa if "@" not in s)
+    if len(adresy) > 1:
+        raise ValueError("więcej niż jeden adres e-mail w linii")
+    return waliduj_uczestnika(imie, adresy[0] if adresy else None)
+
+
+def _rozdziel_przypisanie(tekst):
+    """Migracja starego pola `przypisany` (L6) — jak parsuj_uczestnika, ale
+    nigdy nie odrzuca wpisu: jeśli nie da się wyciągnąć poprawnego adresu,
+    całość trafia do imienia, żeby żadne dane nie zginęły."""
+    try:
+        return parsuj_uczestnika(tekst)
+    except ValueError:
+        return " ".join(tekst.split())[:MAKS_DLUGOSC_IMIENIA] or None, None
+
+
+def _sprawdz_liste_uczestnikow(uczestnicy_z_numerami, jednostka):
+    """Wspólna część parsowania listy z pola tekstowego i z pliku: limit
+    liczby osób i powtórzone adresy (dwa tokeny na jedną skrzynkę to prawie
+    zawsze pomyłka przy wklejaniu). `jednostka` to „linia” albo „wiersz”."""
+    bledy = []
+    if len(uczestnicy_z_numerami) > MAKS_UCZESTNIKOW:
+        bledy.append(f"Lista może zawierać maksymalnie {MAKS_UCZESTNIKOW} osób naraz.")
+    widziane = {}
+    for numer, (_, email) in uczestnicy_z_numerami:
+        if email:
+            klucz = email.lower()
+            if klucz in widziane:
+                bledy.append(f"{jednostka} {numer}: adres {email} powtarza się (pierwszy raz: {jednostka} {widziane[klucz]})")
+            else:
+                widziane[klucz] = numer
+    return [u for _, u in uczestnicy_z_numerami], bledy
+
+
+def parsuj_liste_uczestnikow(tekst):
+    """Lista wklejona w panelu (jedna osoba na linię) -> (uczestnicy, bledy).
+    Tak jak przy imporcie pytań, jeden błąd odrzuca całą listę — dzięki temu
+    nie powstaje połowa tokenów, której potem trzeba szukać."""
+    wynik, bledy = [], []
+    for numer, linia in enumerate(tekst.splitlines(), start=1):
+        if not linia.strip():
+            continue
+        try:
+            wynik.append((numer, parsuj_uczestnika(linia)))
+        except ValueError as e:
+            bledy.append(f"linia {numer}: {e}")
+    uczestnicy, bledy_listy = _sprawdz_liste_uczestnikow(wynik, "linia")
+    return uczestnicy, bledy + bledy_listy
+
+
+def _wiersze_z_csv(dane_pliku):
+    try:
+        tekst = dane_pliku.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        # Excel w polskim Windowsie zapisuje „CSV (rozdzielany przecinkami)” w cp1250.
+        tekst = dane_pliku.decode("cp1250", errors="replace")
+    try:
+        separator = csv.Sniffer().sniff(tekst[:4096], delimiters=";,\t").delimiter
+    except csv.Error:
+        separator = ";"
+    return list(csv.reader(io.StringIO(tekst), delimiter=separator))
+
+
+def wczytaj_plik_uczestnikow(dane_pliku, nazwa_pliku):
+    """Lista uczestników z pliku .xlsx albo .csv (L6) -> (uczestnicy, bledy).
+    Pierwszy wiersz to nagłówki — kolumna z imieniem (`imie`, `imię`, `imię i
+    nazwisko`…) i/lub z adresem (`email`, `e-mail`, `mail`…), wielkość liter
+    bez znaczenia; pozostałe kolumny są ignorowane."""
+    if nazwa_pliku.lower().endswith(".csv"):
+        wiersze = _wiersze_z_csv(dane_pliku)
+    else:
+        try:
+            skoroszyt = openpyxl.load_workbook(filename=io.BytesIO(dane_pliku), read_only=True, data_only=True)
+        except Exception:
+            return [], ["Nie udało się odczytać pliku — sprawdź, czy to poprawny plik .xlsx albo .csv."]
+        wiersze = [[_komorka_na_tekst(k) for k in w] for w in skoroszyt.active.iter_rows(values_only=True)]
+    if not wiersze:
+        return [], ["Plik jest pusty."]
+
+    naglowki = [str(h or "").strip().lower() for h in wiersze[0]]
+    idx_imie = next((i for i, h in enumerate(naglowki) if h in NAGLOWKI_IMIENIA), None)
+    idx_email = next((i for i, h in enumerate(naglowki) if h in NAGLOWKI_EMAILA), None)
+    if idx_imie is None and idx_email is None:
+        return [], ["W pierwszym wierszu pliku brakuje nagłówków kolumn: 'imie' i/lub 'email'."]
+
+    def pole(wiersz, idx):
+        return str(wiersz[idx] or "") if idx is not None and idx < len(wiersz) else ""
+
+    wynik, bledy = [], []
+    for numer, wiersz in enumerate(wiersze[1:], start=2):
+        imie, email = pole(wiersz, idx_imie), pole(wiersz, idx_email)
+        if not imie.strip() and not email.strip():
+            continue
+        try:
+            wynik.append((numer, waliduj_uczestnika(imie, email)))
+        except ValueError as e:
+            bledy.append(f"wiersz {numer}: {e}")
+    uczestnicy, bledy_listy = _sprawdz_liste_uczestnikow(wynik, "wiersz")
+    if not uczestnicy and not bledy:
+        bledy.append("Plik nie zawiera żadnych uczestników.")
+    return uczestnicy, bledy + bledy_listy
+
+
+def opis_uczestnika(imie, email):
+    """Jeden napis do wyświetlania: `Imię <email>`, samo imię albo sam e-mail."""
+    if imie and email:
+        return f"{imie} <{email}>"
+    return imie or email or ""
+
+
+def wygeneruj_tokeny(test_id, liczba, dlugosc=8, uczestnicy=None):
     """Generuje `liczba` nowych, unikalnych tokenów dla wskazanego testu.
-    Jeśli podano `przypisania` (lista imion/maili o długości `liczba`), i-ty
-    token dostaje i-te przypisanie. Zwraca listę {"token", "przypisany"}."""
+    Jeśli podano `uczestnicy` (lista par (imie, email) o długości `liczba`),
+    i-ty token dostaje i-tą osobę. Zwraca listę {"token", "imie", "email"}."""
     if dlugosc < 4 or dlugosc > 20:
         raise ValueError("Długość tokenu musi być od 4 do 20 znaków.")
-    if przypisania is not None and len(przypisania) != liczba:
-        raise ValueError("Liczba przypisań musi odpowiadać liczbie tokenów.")
+    if uczestnicy is not None and len(uczestnicy) != liczba:
+        raise ValueError("Liczba uczestników musi odpowiadać liczbie tokenów.")
+    uczestnicy = uczestnicy or [(None, None)] * liczba
 
     # Limit prób, żeby żądanie liczby tokenów przekraczającej pulę możliwych
     # kodów (np. dlugosc=1 i liczba=40) kończyło się czytelnym błędem zamiast
@@ -437,17 +619,116 @@ def wygeneruj_tokeny(test_id, liczba, dlugosc=8, przypisania=None):
 
         teraz = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         conn.executemany(
-            "INSERT INTO tokeny (token, test_id, wykorzystany, data_utworzenia, przypisany) VALUES (?, ?, 0, ?, ?)",
-            [(token, test_id, teraz, (przypisania[i] if przypisania else None)) for i, token in enumerate(nowe)],
+            "INSERT INTO tokeny (token, test_id, wykorzystany, data_utworzenia, imie, email) VALUES (?, ?, 0, ?, ?, ?)",
+            [(token, test_id, teraz, *uczestnicy[i]) for i, token in enumerate(nowe)],
         )
-    return [{"token": token, "przypisany": (przypisania[i] if przypisania else None)} for i, token in enumerate(nowe)]
+    return [{"token": token, "imie": uczestnicy[i][0], "email": uczestnicy[i][1]} for i, token in enumerate(nowe)]
 
 
-def przypisz_token(token, przypisany):
-    """Ustawia/aktualizuje osobę przypisaną do tokenu. Zwraca True, jeśli token istniał."""
+def przypisz_token(token, imie, email):
+    """Ustawia/aktualizuje osobę przypisaną do tokenu (już zwalidowane dane).
+    Zmiana adresu kasuje stan wysyłki — zaproszenie na nowy adres jeszcze nie
+    poszło, więc token wraca do „niewysłanych”. Zwraca True, jeśli token istniał."""
     with baza() as conn:
-        cur = conn.execute("UPDATE tokeny SET przypisany = ? WHERE token = ?", (przypisany or None, token))
+        cur = conn.execute(
+            """
+            UPDATE tokeny SET
+                mail_wyslany_at = CASE WHEN email IS ? THEN mail_wyslany_at END,
+                przypomnienie_wyslane_at = CASE WHEN email IS ? THEN przypomnienie_wyslane_at END,
+                mail_status = CASE WHEN email IS ? THEN mail_status END,
+                mail_blad = CASE WHEN email IS ? THEN mail_blad END,
+                imie = ?, email = ?
+            WHERE token = ?
+            """,
+            (email, email, email, email, imie, email, token),
+        )
     return cur.rowcount > 0
+
+
+# --- Wysyłka maili (Etap 6, F3/E6) ------------------------------------------------------
+
+DOMYSLNE_USTAWIENIA_APLIKACJI = {
+    "nazwa_nadawcy": "Test wiedzy",
+    "adres_aplikacji": "http://localhost:5555",
+}
+
+
+def pobierz_ustawienia_aplikacji():
+    with baza() as conn:
+        zapisane = {w["klucz"]: w["wartosc"] for w in conn.execute("SELECT klucz, wartosc FROM ustawienia_aplikacji")}
+    return {klucz: zapisane.get(klucz) or domyslna for klucz, domyslna in DOMYSLNE_USTAWIENIA_APLIKACJI.items()}
+
+
+def zapisz_ustawienia_aplikacji(**ustawienia):
+    for klucz in ustawienia:
+        if klucz not in DOMYSLNE_USTAWIENIA_APLIKACJI:
+            raise ValueError(f"Nieznane ustawienie: {klucz}")
+    with baza() as conn:
+        conn.executemany(
+            "INSERT INTO ustawienia_aplikacji (klucz, wartosc) VALUES (?, ?) "
+            "ON CONFLICT(klucz) DO UPDATE SET wartosc = excluded.wartosc",
+            list(ustawienia.items()),
+        )
+
+
+def zapisz_szablony_maili(test_id, mail_temat, mail_tresc, przypomnienie_temat, przypomnienie_tresc):
+    """Szablony zaproszenia i przypomnienia dla testu — None = szablon domyślny."""
+    with baza() as conn:
+        cur = conn.execute(
+            "UPDATE testy SET mail_temat = ?, mail_tresc = ?, przypomnienie_temat = ?, przypomnienie_tresc = ? "
+            "WHERE id = ?",
+            (mail_temat, mail_tresc, przypomnienie_temat, przypomnienie_tresc, test_id),
+        )
+    return cur.rowcount > 0
+
+
+RODZAJE_WYSYLKI = {"zaproszenia", "przypomnienia", "zaznaczone"}
+
+
+def tokeny_do_wysylki(test_id, rodzaj, zaznaczone=None):
+    """Tokeny z adresem e-mail, do których ma pójść mail:
+    - `zaproszenia` — zaproszenie jeszcze nie zostało wysłane (także po błędzie),
+    - `przypomnienia` (E6) — osoba nie ukończyła testu (nie zaczęła albo w trakcie),
+    - `zaznaczone` — zaproszenie (ponownie) do tokenów wybranych na liście."""
+    if rodzaj not in RODZAJE_WYSYLKI:
+        raise ValueError(f"Nieznany rodzaj wysyłki: {rodzaj}")
+    zapytanie = """
+        SELECT tk.token, tk.imie, tk.email
+        FROM tokeny tk
+        LEFT JOIN podejscia pj ON pj.token = tk.token
+        WHERE tk.test_id = ? AND tk.email IS NOT NULL
+    """
+    parametry = [test_id]
+    if rodzaj == "zaproszenia":
+        # Bez tokenów już ukończonych — np. rozdanych wcześniej ręcznie.
+        zapytanie += " AND tk.mail_wyslany_at IS NULL AND COALESCE(pj.status, 'wolny') IN ('wolny', 'w_trakcie')"
+    elif rodzaj == "przypomnienia":
+        zapytanie += " AND COALESCE(pj.status, 'wolny') IN ('wolny', 'w_trakcie')"
+    else:
+        zaznaczone = list(zaznaczone or [])
+        if not zaznaczone:
+            return []
+        zapytanie += f" AND tk.token IN ({', '.join('?' for _ in zaznaczone)})"
+        parametry += zaznaczone
+    zapytanie += " ORDER BY tk.data_utworzenia, tk.token"
+    with baza() as conn:
+        return [dict(w) for w in conn.execute(zapytanie, parametry).fetchall()]
+
+
+def zapisz_wynik_wysylki(token, przypomnienie, blad=None):
+    """Wynik wysłania jednego maila: `mail_status`/`mail_blad` opisują ostatnią
+    próbę (dowolnego rodzaju), data trafia do kolumny zaproszenia albo
+    przypomnienia tylko przy sukcesie."""
+    teraz = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    kolumna_daty = "przypomnienie_wyslane_at" if przypomnienie else "mail_wyslany_at"
+    with baza() as conn:
+        if blad is None:
+            conn.execute(
+                f"UPDATE tokeny SET mail_status = 'ok', mail_blad = NULL, {kolumna_daty} = ? WHERE token = ?",
+                (teraz, token),
+            )
+        else:
+            conn.execute("UPDATE tokeny SET mail_status = 'blad', mail_blad = ? WHERE token = ?", (blad, token))
 
 
 def resetuj_token(token):
@@ -564,21 +845,23 @@ def czy_zaliczony(procent, prog_zaliczenia):
     return procent >= prog_zaliczenia
 
 
-def szczegoly_podejsc_testu(test_id):
+def szczegoly_podejsc_testu(test_id, token=None):
     """Dane do szczegółowego eksportu (E1) — dla każdego zakończonego podejścia
     wszystkie wylosowane pytania w kolejności wyświetlania, także te bez
-    odpowiedzi (np. gdy minął czas), których nie ma w widoku arkusz_wynikow."""
+    odpowiedzi (np. gdy minął czas), których nie ma w widoku arkusz_wynikow.
+    Z `token` — tylko podejście jednej osoby (eksport indywidualny, Etap 6)."""
+    zapytanie = """
+        SELECT pj.token AS token, tk.imie AS imie, tk.email AS email, pj.wybrane_pytania AS wybrane_pytania
+        FROM podejscia pj
+        JOIN tokeny tk ON tk.token = pj.token
+        WHERE pj.test_id = ? AND pj.status IN ('zakonczone', 'czas_minal')
+    """
+    parametry = [test_id]
+    if token is not None:
+        zapytanie += " AND pj.token = ?"
+        parametry.append(token)
     with baza() as conn:
-        podejscia = conn.execute(
-            """
-            SELECT pj.token AS token, tk.przypisany AS przypisany, pj.wybrane_pytania AS wybrane_pytania
-            FROM podejscia pj
-            JOIN tokeny tk ON tk.token = pj.token
-            WHERE pj.test_id = ? AND pj.status IN ('zakonczone', 'czas_minal')
-            ORDER BY pj.data_zakonczenia, pj.token
-            """,
-            (test_id,),
-        ).fetchall()
+        podejscia = conn.execute(zapytanie + " ORDER BY pj.data_zakonczenia, pj.token", parametry).fetchall()
         pytania = {
             w["id"]: w
             for w in conn.execute("SELECT * FROM pytania WHERE test_id = ?", (test_id,)).fetchall()
@@ -605,7 +888,8 @@ def szczegoly_podejsc_testu(test_id):
             wynik.append(
                 {
                     "token": podejscie["token"],
-                    "przypisany": podejscie["przypisany"],
+                    "imie": podejscie["imie"],
+                    "email": podejscie["email"],
                     "numer": numer,
                     "tresc_pytania": pytanie["tresc_pytania"],
                     "odpowiedz_uzytkownika": dana,
@@ -613,6 +897,7 @@ def szczegoly_podejsc_testu(test_id):
                     "poprawna_odpowiedz": pytanie["odpowiedz"],
                     "tresc_poprawnej_odpowiedzi": pytanie[f"opcja_{pytanie['odpowiedz'].lower()}"],
                     "czy_poprawna": dana == pytanie["odpowiedz"],
+                    "wyjasnienie": pytanie["wyjasnienie"],
                 }
             )
     return wynik
