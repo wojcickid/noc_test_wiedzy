@@ -6,18 +6,25 @@ from conftest import PYTANIA_TESTOWE
 import db
 
 
-def test_token_da_sie_zuzyc_tylko_raz(klient, test_z_pytaniami):
+def test_token_pozwala_wznowic_w_trakcie_ale_nie_po_zakonczeniu(klient, test_z_pytaniami):
     (token,) = [w["token"] for w in db.wygeneruj_tokeny(test_z_pytaniami, 1, dlugosc=6)]
 
-    pierwszy_wynik = app_module.waliduj_i_zuzyj_token(token)
-    drugi_wynik = app_module.waliduj_i_zuzyj_token(token)
+    pierwszy_wynik = app_module.rozpocznij_lub_wznow_podejscie(token)
+    # Drugie wejście (np. podwójne kliknięcie „Rozpocznij”, B9) wznawia to samo
+    # podejście zamiast pokazywać fałszywy błąd „token już wykorzystany”.
+    drugi_wynik = app_module.rozpocznij_lub_wznow_podejscie(token)
 
     assert pierwszy_wynik == test_z_pytaniami
-    assert drugi_wynik is None
+    assert drugi_wynik == test_z_pytaniami
+
+    with db.baza() as conn:
+        conn.execute("UPDATE podejscia SET status = 'zakonczone' WHERE token = ?", (token,))
+
+    assert app_module.rozpocznij_lub_wznow_podejscie(token) is None
 
 
 def test_nieistniejacy_token_zwraca_none(klient):
-    assert app_module.waliduj_i_zuzyj_token("COSCOSCOS") is None
+    assert app_module.rozpocznij_lub_wznow_podejscie("COSCOSCOS") is None
 
 
 def test_tokeny_generowane_w_partii_sa_unikalne(klient, test_z_pytaniami):

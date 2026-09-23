@@ -130,7 +130,7 @@ Aktualizuj tę tabelę na końcu każdej sesji.
 |------|--------|----------------|------|-------|
 | 0 Przygotowanie | zrobione (czeka na akceptację) | `etap-0-testy-i-baza-html` | 2026-09-23 | S4, S5, UI2 — patrz sekcja 0.5 |
 | 1 Szybkie poprawki | zrobione (czeka na akceptację) | `etap-1-szybkie-poprawki` | 2026-09-23 | B2, B3/S3, B4, B7, B10, B11, B12, B14, B15, B16, B17, B18, B19, B20, UI1, UI3, UI4 — patrz sekcja 0.5 |
-| 2 Przebieg testu w bazie | do zrobienia | | | |
+| 2 Przebieg testu w bazie | zrobione (czeka na akceptację) | `etap-2-przebieg-testu-w-bazie` | 2026-09-23 | L1/S2, B1, B8, B9, B13, E13, L3, L2 (reset), UI8 (statusy) — patrz sekcja 0.5 |
 | 3 Import | do zrobienia | | | |
 | 4 Kontrola nad testem | do zrobienia | | | |
 | 5 Eksporty i raporty | do zrobienia | | | |
@@ -157,6 +157,19 @@ Dopisuj tu decyzje usera (z datą i etapem) oraz problemy spoza zakresu bieżąc
 - **B10 — Post/Redirect/Get przy generowaniu tokenów:** zaimplementowane przez `session["nowe_tokeny"]` ustawiane na POST i `session.pop(...)` na GET — nowo wygenerowane tokeny pokazują się dokładnie raz, F5 po przekierowaniu ich nie duplikuje. Pokryte testem (`test_odswiezenie_po_generowaniu_tokenow_nie_pokazuje_ich_ponownie`).
 - **B16 — wyniki po `test_id`, nie po nazwie:** wymagało zmiany widoku `zbiorcze_wyniki` w `db.py` (dodanie `t.id AS test_id`, `GROUP BY` po id zamiast po nazwie) — wykracza formalnie poza `test_wiedzy_app.py`, ale jest niezbędne do naprawienia B16 na poziomie trasy `admin_test`, więc zrobione w ramach tego samego etapu.
 - **Test bez pokrycia automatycznego:** B4 (ograniczenie hosta w trybie debug) zweryfikowane wyłącznie ręcznie (uruchomienie `python test_wiedzy_app.py`, sprawdzenie że domyślnie nasłuchuje na `0.0.0.0`) — nie da się tego sensownie sprawdzić w pytest bez faktycznego bindowania socketa.
+
+**Etap 2 (2026-09-23):**
+
+- **Odpowiedzi na pytania z sekcji 0.3** (wszystkie zgodne z rekomendacją): wznowienie działa z dowolnego urządzenia/przeglądarki, tym samym tokenem; reset tokenu przez admina **usuwa** poprzednie odpowiedzi (nie archiwizuje ich jako osobne podejście); wdrożenie zaplanuje user poza godzinami testów (aktywne sesje plikowe i tak znikają wraz z usunięciem `flask_session/`).
+- **Sprawdzenie duplikatów przed `UNIQUE`:** zapytanie na żywej `baza.db` przed zmianą schematu — **0 duplikatów** `(token, pytanie_id)` w `odpowiedzi_uzytkownika`, bezpiecznie dodano `CREATE UNIQUE INDEX idx_odpowiedzi_unikalne`.
+- **Nowa tabela `podejscia`:** `token` jako PK (jedno aktywne/zakończone podejście na token), `wybrane_pytania` (JSON z listą id wylosowanych pytań), `liczba_pytan`, `indeks_pytania`, `status` (`w_trakcie`/`zakonczone`), `data_rozpoczecia`/`data_zakonczenia`. Zastąpiła cały mechanizm plikowej sesji uczestnika (`get_server_session`/`save_server_session`/`clear_server_session`/`_plik_sesji`/`SESSION_DIR`) — usunięty w całości (L1/S2, B13). Sesja Flask (ciasteczko) uczestnika trzyma teraz wyłącznie sam token, nic więcej.
+- **Wznowienie (B1, B9, E13):** nowa funkcja `rozpocznij_lub_wznow_podejscie()` (zastąpiła `waliduj_i_zuzyj_token()`) — pierwsze wejście atomowo oznacza token i losuje pytania (jak dawniej), kolejne wejścia tym samym tokenem **wznawiają** trwające podejście zamiast pokazywać błąd „już wykorzystany". Token zostaje zablokowany na stałe dopiero, gdy podejście ma status `zakonczone`.
+- **Zapis odpowiedzi (L1, B8):** każda odpowiedź trafia do `odpowiedzi_uzytkownika` od razu po kliknięciu „Dalej"/„Zakończ test" (`INSERT OR IGNORE`), a przesunięcie `indeks_pytania` w `podejscia` jest atomowym `UPDATE ... WHERE indeks_pytania = ?` — podwójne kliknięcie/wyścig dwóch urządzeń nie duplikuje odpowiedzi ani nie przesuwa indeksu dwa razy.
+- **L3 — mianownik wyniku:** `/wynik` i widok `zbiorcze_wyniki` liczą mianownik z `podejscia.liczba_pytan` (liczba wylosowanych pytań), nie z `COUNT()` udzielonych odpowiedzi.
+- **Skutek uboczny zmiany widoków (ważne, spoza pierwotnej listy ID):** `arkusz_wynikow` i `zbiorcze_wyniki` teraz pokazują tylko podejścia ze statusem `zakonczone` — **bez tego `/sprawdz-wynik` i widok admina ujawniałyby cząstkowe odpowiedzi w trakcie trwania testu** (wcześniej było to niemożliwe, bo odpowiedzi zapisywały się dopiero na końcu). Pokryte testem (`test_sprawdz_wynik_nie_pokazuje_czesciowych_wynikow_w_trakcie_testu`).
+- **L2 — zaimplementowano tylko reset** (`resetuj_token()` w `db.py`, akcja „Resetuj" przy tokenie w `/admin/testy/<id>/tokeny`): kasuje `podejscia`+`odpowiedzi_uzytkownika` dla tokenu i cofa `wykorzystany`. Pełne „unieważnienie" (trwałe zablokowanie tokenu bez możliwości resetu) **celowo pominięte** — plan wymieniał je razem z resetem, ale praktyczny przypadek użycia to reset (ponowne podejście), a nie trwałe blokowanie; można dopisać później, jeśli okaże się potrzebne.
+- **UI8 — statusy tokenów:** kolumna „Status" w `/admin/testy/<id>/tokeny` pokazuje `wolny` / `w trakcie` / `ukończony` (z `LEFT JOIN podejscia`). Status „czas minął" pominięty — zależy od limitu czasu (F1), poza zakresem Etapu 2.
+- **Migracja historycznych danych (ostrożność przy migracji, jak zalecał plan):** `_odtworz_historyczne_podejscia()` w `db.py` — idempotentna, uruchamiana przy każdym starcie w ramach `_migruj_tabele`. Dla każdego tokenu z odpowiedziami, ale bez wiersza w `podejscia` (czyli odpowiedzi sprzed Etapu 2), odtwarza zakończone podejście na podstawie istniejących `odpowiedzi_uzytkownika`. **Zweryfikowane na żywej `baza.db`** (1 test, 7 tokenów, 10 odpowiedzi sprzed migracji) — po `db.inicjalizuj()` powstały 2 wiersze w `podejscia` (dla 2 tokenów z odpowiedziami), `zbiorcze_wyniki` pokazuje poprawne dotychczasowe wyniki (5/5 pytań, wynik 3/5 dla obu) — **żadne historyczne dane nie zniknęły.**
 
 ---
 

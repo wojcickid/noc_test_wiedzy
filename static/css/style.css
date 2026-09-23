@@ -118,6 +118,9 @@ table.szczegoly td {
 }
 table.szczegoly tr.ok { background-color: #e6f4ea; }
 table.szczegoly tr.zle { background-color: #fdecea; }
+table.szczegoly tr.status-wolny { background-color: #f4f4f4; }
+table.szczegoly tr.status-w_trakcie { background-color: #fff8e1; }
+table.szczegoly tr.status-zakonczone { background-color: #e6f4ea; }
 .admin-nav {
     display: flex;
     justify-content: space-between;
@@ -165,4 +168,16 @@ form.przypisz button {
     margin: 0;
     padding: 4px 10px;
     font-size: 0.9em;
+}
+form.resetuj {
+    display: inline;
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0 0 0 6px;
+}
+form.resetuj button {
+    margin: 0;
+    padding: 2px 8px;
+    font-size: 0.85em;
 }

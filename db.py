@@ -1,5 +1,6 @@
 """Wspólny dostęp do bazy SQLite używany przez aplikację i skrypty pomocnicze."""
 
+import json
 import os
 import secrets
 import sqlite3
@@ -56,9 +57,28 @@ CREATE TABLE IF NOT EXISTS odpowiedzi_uzytkownika (
     data_wyslania TEXT NOT NULL
 );
 
+-- Postęp podejścia do testu (Etap 2, L1) — jedna aktywna/zakończona próba na
+-- token. Każda odpowiedź trafia od razu do odpowiedzi_uzytkownika, więc utrata
+-- ciasteczka/sesji przeglądarki nie kasuje postępu (B1, B13) i test można
+-- wznowić tym samym tokenem na dowolnym urządzeniu (E13).
+CREATE TABLE IF NOT EXISTS podejscia (
+    token TEXT PRIMARY KEY REFERENCES tokeny(token),
+    test_id INTEGER NOT NULL REFERENCES testy(id),
+    wybrane_pytania TEXT NOT NULL,
+    liczba_pytan INTEGER NOT NULL,
+    indeks_pytania INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'w_trakcie',
+    data_rozpoczecia TEXT NOT NULL,
+    data_zakonczenia TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_pytania_test ON pytania(test_id);
 CREATE INDEX IF NOT EXISTS idx_tokeny_test ON tokeny(test_id);
 CREATE INDEX IF NOT EXISTS idx_odpowiedzi_token ON odpowiedzi_uzytkownika(token);
+CREATE INDEX IF NOT EXISTS idx_podejscia_test ON podejscia(test_id);
+-- Jeden wiersz na parę (token, pytanie) — gwarantuje w SQLite, że dwa
+-- równoczesne zapisy tej samej odpowiedzi się nie zduplikują (B8).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_odpowiedzi_unikalne ON odpowiedzi_uzytkownika(token, pytanie_id);
 """
 
 # Widoki są odtwarzane przy każdym starcie (DROP + CREATE, nie IF NOT EXISTS),
@@ -68,6 +88,8 @@ SCHEMAT_WIDOKI = """
 DROP VIEW IF EXISTS arkusz_wynikow;
 -- Odpowiednik dawnego "arkusza wyników" (wyniki_<token>.xlsx) — pytanie po
 -- pytaniu, z odpowiedzią użytkownika i poprawną odpowiedzią (litera + treść).
+-- Tylko podejścia zakończone (L1) — w trakcie trwania testu nie pokazujemy
+-- cząstkowych wyników nikomu, kto poda/sprawdzi ten sam token po drodze.
 CREATE VIEW arkusz_wynikow AS
 SELECT
     ou.token AS token,
@@ -84,25 +106,40 @@ SELECT
     END AS tresc_poprawnej_odpowiedzi,
     ou.data_wyslania AS data_wyslania
 FROM odpowiedzi_uzytkownika ou
-JOIN pytania p ON p.id = ou.pytanie_id;
+JOIN pytania p ON p.id = ou.pytanie_id
+JOIN podejscia pj ON pj.token = ou.token
+WHERE pj.status = 'zakonczone';
 
 DROP VIEW IF EXISTS zbiorcze_wyniki;
--- Odpowiednik dawnego wyniki_testu.xlsx — jeden wiersz na uczestnika.
+-- Odpowiednik dawnego wyniki_testu.xlsx — jeden wiersz na zakończone podejście.
+-- Mianownik (wszystkie) to liczba wylosowanych pytań z podejscia, nie COUNT()
+-- udzielonych odpowiedzi (L3) — te dwie liczby są równe dla normalnie
+-- ukończonego podejścia, ale tylko ta pierwsza jest poprawna, gdyby kiedyś
+-- się rozjechały (np. ręczna ingerencja w dane).
 CREATE VIEW zbiorcze_wyniki AS
 SELECT
-    ou.token AS token,
+    pj.token AS token,
     tk.przypisany AS przypisany,
     t.id AS test_id,
     t.nazwa AS test,
-    COUNT(*) AS wszystkie,
-    SUM(CASE WHEN ou.odpowiedz = p.odpowiedz THEN 1 ELSE 0 END) AS poprawne,
-    ROUND(100.0 * SUM(CASE WHEN ou.odpowiedz = p.odpowiedz THEN 1 ELSE 0 END) / COUNT(*), 1) AS procent,
-    MAX(ou.data_wyslania) AS data_wyslania
-FROM odpowiedzi_uzytkownika ou
-JOIN pytania p ON p.id = ou.pytanie_id
-JOIN tokeny tk ON tk.token = ou.token
+    pj.liczba_pytan AS wszystkie,
+    (
+        SELECT COUNT(*) FROM odpowiedzi_uzytkownika ou
+        JOIN pytania p ON p.id = ou.pytanie_id
+        WHERE ou.token = pj.token AND ou.odpowiedz = p.odpowiedz
+    ) AS poprawne,
+    ROUND(
+        100.0 * (
+            SELECT COUNT(*) FROM odpowiedzi_uzytkownika ou
+            JOIN pytania p ON p.id = ou.pytanie_id
+            WHERE ou.token = pj.token AND ou.odpowiedz = p.odpowiedz
+        ) / pj.liczba_pytan, 1
+    ) AS procent,
+    pj.data_zakonczenia AS data_wyslania
+FROM podejscia pj
+JOIN tokeny tk ON tk.token = pj.token
 JOIN testy t ON t.id = tk.test_id
-GROUP BY ou.token, t.id;
+WHERE pj.status = 'zakonczone';
 """
 
 
@@ -117,6 +154,55 @@ def _migruj_tabele(conn):
     kolumny_testy = {w["name"] for w in conn.execute("PRAGMA table_info(testy)").fetchall()}
     if "liczba_pytan_do_losowania" not in kolumny_testy:
         conn.execute("ALTER TABLE testy ADD COLUMN liczba_pytan_do_losowania INTEGER NOT NULL DEFAULT 20")
+
+    _odtworz_historyczne_podejscia(conn)
+
+
+def _odtworz_historyczne_podejscia(conn):
+    """Etap 2 (L1) wprowadził tabelę `podejscia` — starsze odpowiedzi zapisane
+    jeszcze w modelu "wszystko naraz w /wynik" nie mają dla siebie wiersza w tej
+    tabeli. Bez tego zniknęłyby z widoków wyników (które teraz wymagają
+    podejscia.status='zakonczone'), więc odtwarzamy brakujące wiersze jako
+    zakończone podejścia na podstawie istniejących odpowiedzi. Idempotentne —
+    po pierwszym uruchomieniu każdy taki token ma już swój wiersz."""
+    brakujace_podejscia = conn.execute(
+        """
+        SELECT DISTINCT ou.token AS token, tk.test_id AS test_id
+        FROM odpowiedzi_uzytkownika ou
+        JOIN tokeny tk ON tk.token = ou.token
+        LEFT JOIN podejscia pj ON pj.token = ou.token
+        WHERE pj.token IS NULL
+        """
+    ).fetchall()
+    for wiersz in brakujace_podejscia:
+        pytania_id = [
+            w["pytanie_id"]
+            for w in conn.execute(
+                "SELECT pytanie_id FROM odpowiedzi_uzytkownika WHERE token = ? ORDER BY id",
+                (wiersz["token"],),
+            ).fetchall()
+        ]
+        czasy = conn.execute(
+            "SELECT MIN(data_wyslania) AS start, MAX(data_wyslania) AS koniec "
+            "FROM odpowiedzi_uzytkownika WHERE token = ?",
+            (wiersz["token"],),
+        ).fetchone()
+        conn.execute(
+            """
+            INSERT INTO podejscia
+                (token, test_id, wybrane_pytania, liczba_pytan, indeks_pytania, status, data_rozpoczecia, data_zakonczenia)
+            VALUES (?, ?, ?, ?, ?, 'zakonczone', ?, ?)
+            """,
+            (
+                wiersz["token"],
+                wiersz["test_id"],
+                json.dumps(pytania_id),
+                len(pytania_id),
+                len(pytania_id),
+                czasy["start"],
+                czasy["koniec"],
+            ),
+        )
 
 
 def polacz():
@@ -238,3 +324,21 @@ def przypisz_token(token, przypisany):
     with baza() as conn:
         cur = conn.execute("UPDATE tokeny SET przypisany = ? WHERE token = ?", (przypisany or None, token))
     return cur.rowcount > 0
+
+
+def resetuj_token(token):
+    """Akcja admina (L2) — kasuje podejście i dotychczasowe odpowiedzi powiązane
+    z tokenem i odblokowuje go, żeby uczestnik mógł zacząć test od nowa.
+    Zgodnie z decyzją z Etapu 2: reset usuwa poprzednie odpowiedzi (nie
+    archiwizuje ich jako osobne podejście). Zwraca True, jeśli token istniał."""
+    with baza() as conn:
+        token_wiersz = conn.execute("SELECT 1 FROM tokeny WHERE token = ?", (token,)).fetchone()
+        if token_wiersz is None:
+            return False
+        conn.execute("DELETE FROM odpowiedzi_uzytkownika WHERE token = ?", (token,))
+        conn.execute("DELETE FROM podejscia WHERE token = ?", (token,))
+        conn.execute(
+            "UPDATE tokeny SET wykorzystany = 0, data_wykorzystania = NULL WHERE token = ?",
+            (token,),
+        )
+    return True

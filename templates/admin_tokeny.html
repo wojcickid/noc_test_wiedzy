@@ -56,7 +56,7 @@
     </thead>
     <tbody>
         {% for token in tokeny %}
-        <tr class="{{ 'zle' if token.wykorzystany else 'ok' }}">
+        <tr class="status-{{ token.status }}">
             <td>
                 {% if token.wykorzystany %}
                 <a href="{{ url_for('admin_token_szczegoly', token=token.token) }}">{{ token.token }}</a>
@@ -72,7 +72,16 @@
                     <button type="submit">Zapisz</button>
                 </form>
             </td>
-            <td>{{ 'wykorzystany' if token.wykorzystany else 'wolny' }}</td>
+            <td>
+                {{ {"wolny": "wolny", "w_trakcie": "w trakcie", "zakonczone": "ukończony"}[token.status] }}
+                {% if token.wykorzystany %}
+                <form class="resetuj" action="{{ url_for('admin_reset_token', token=token.token) }}" method="post" onsubmit="return confirm('Zresetować ten token? Dotychczasowe odpowiedzi zostaną usunięte.');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="test_id" value="{{ test.id }}">
+                    <button type="submit">Resetuj</button>
+                </form>
+                {% endif %}
+            </td>
             <td>{{ token.data_utworzenia }}</td>
             <td>{{ token.data_wykorzystania or '—' }}</td>
         </tr>

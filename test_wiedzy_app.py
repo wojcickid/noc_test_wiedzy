@@ -15,15 +15,13 @@ from db import (
     inicjalizuj,
     losowy_kod,
     przypisz_token,
+    resetuj_token,
     wygeneruj_tokeny,
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-SESSION_DIR = os.path.join(BASE_DIR, "flask_session")
 SECRET_KEY_FILE = os.path.join(BASE_DIR, ".flask_secret_key")
 ADMIN_HASLO_FILE = os.path.join(BASE_DIR, ".admin_haslo")
-
-os.makedirs(SESSION_DIR, exist_ok=True)
 
 # Przykładowy zestaw pytań do jednoklikowego wgrania w panelu (/admin/import/przyklad)
 PRZYKLADOWE_PYTANIA = pd.DataFrame(
@@ -118,55 +116,54 @@ def csrf_chroniony(f):
     return opakowana
 
 
-def get_server_session():
-    """Zwraca (sid, dane) danych sesji trzymanych po stronie serwera. Ciasteczko
-    przeglądarki przechowuje wyłącznie losowy identyfikator, nigdy treść pytań
-    ani poprawnych odpowiedzi."""
-    sid = session.get("sid")
-    if sid:
-        try:
-            with open(_plik_sesji(sid), "r", encoding="utf-8") as f:
-                return sid, json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            pass
-    sid = secrets.token_urlsafe(32)
-    session["sid"] = sid
-    return sid, {}
+def rozpocznij_lub_wznow_podejscie(token):
+    """Zwraca id testu, do którego token daje dostęp — jeśli można rozpocząć
+    nowe podejście albo wznowić trwające (B1, E13) — albo None, jeśli token
+    nie istnieje albo podejście jest już zakończone/unieważnione.
 
-
-def save_server_session(sid, dane):
-    with open(_plik_sesji(sid), "w", encoding="utf-8") as f:
-        json.dump(dane, f)
-
-
-def clear_server_session(sid):
-    session.pop("sid", None)
-    try:
-        os.remove(_plik_sesji(sid))
-    except FileNotFoundError:
-        pass
-
-
-def _plik_sesji(sid):
-    return os.path.join(SESSION_DIR, f"{sid}.json")
-
-
-def waliduj_i_zuzyj_token(token):
-    """Atomowo sprawdza jednorazowy token i oznacza go jako wykorzystany —
-    pojedyncze zapytanie UPDATE...WHERE wykorzystany=0 gwarantuje w SQLite, że
-    dwie osoby nie zużyją tego samego tokenu równocześnie. Zwraca id testu,
-    do którego token daje dostęp, albo None, jeśli token jest nieprawidłowy
-    lub już wykorzystany."""
-    teraz = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    Pierwsze wejście atomowo oznacza token jako wykorzystany i losuje pytania
+    podejścia (UPDATE...WHERE wykorzystany=0, jak dawniej w
+    waliduj_i_zuzyj_token) — gwarantuje to w SQLite, że dwa równoczesne
+    wejścia tym samym tokenem (podwójne kliknięcie „Rozpocznij”, B9) nie
+    wylosują dwóch różnych zestawów pytań: przegrany wyścig po prostu
+    dołącza do podejścia utworzonego przez zwycięzcę."""
     with baza() as conn:
+        token_wiersz = conn.execute("SELECT test_id FROM tokeny WHERE token = ?", (token,)).fetchone()
+        if token_wiersz is None:
+            return None
+        test_id = token_wiersz["test_id"]
+
+        podejscie = conn.execute("SELECT status FROM podejscia WHERE token = ?", (token,)).fetchone()
+        if podejscie is not None:
+            return test_id if podejscie["status"] == "w_trakcie" else None
+
+        teraz = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         cur = conn.execute(
             "UPDATE tokeny SET wykorzystany = 1, data_wykorzystania = ? WHERE token = ? AND wykorzystany = 0",
             (teraz, token),
         )
         if cur.rowcount != 1:
-            return None
-        wiersz = conn.execute("SELECT test_id FROM tokeny WHERE token = ?", (token,)).fetchone()
-    return wiersz["test_id"]
+            podejscie = conn.execute("SELECT status FROM podejscia WHERE token = ?", (token,)).fetchone()
+            return test_id if podejscie is not None and podejscie["status"] == "w_trakcie" else None
+
+        test_wiersz = conn.execute(
+            "SELECT liczba_pytan_do_losowania FROM testy WHERE id = ?", (test_id,)
+        ).fetchone()
+        liczba_pytan = test_wiersz["liczba_pytan_do_losowania"] if test_wiersz else 20
+        wiersze = conn.execute(
+            "SELECT id FROM pytania WHERE test_id = ? ORDER BY RANDOM() LIMIT ?",
+            (test_id, liczba_pytan),
+        ).fetchall()
+        wybrane_pytania_id = [w["id"] for w in wiersze]
+
+        conn.execute(
+            """
+            INSERT INTO podejscia (token, test_id, wybrane_pytania, liczba_pytan, indeks_pytania, status, data_rozpoczecia)
+            VALUES (?, ?, ?, ?, 0, 'w_trakcie', ?)
+            """,
+            (token, test_id, json.dumps(wybrane_pytania_id), len(wybrane_pytania_id), teraz),
+        )
+    return test_id
 
 
 app.jinja_env.globals["csrf_token"] = generuj_csrf_token
@@ -180,56 +177,41 @@ def index():
             flash("Podaj token dostępu.", "blad")
             return redirect(url_for("index"))
 
-        test_id = waliduj_i_zuzyj_token(token)
+        test_id = rozpocznij_lub_wznow_podejscie(token)
         if test_id is None:
             flash("Nieprawidłowy lub już wykorzystany token dostępu.", "blad")
             return redirect(url_for("index"))
 
-        sid, dane = get_server_session()
-        dane["token"] = token
-        dane["test_id"] = test_id
-        dane.pop("wybrane_pytania_id", None)
-        dane.pop("udzielone_odpowiedzi", None)
-        dane.pop("indeks_pytania", None)
-        save_server_session(sid, dane)
+        # W sesji (ciasteczku) trzymamy wyłącznie sam token — postęp i pytania
+        # są w bazie (L1), więc ten sam token wznawia test na dowolnym
+        # urządzeniu, wystarczy go ponownie wpisać na stronie głównej (E13).
+        session["token"] = token
         return redirect(url_for("test"))
     return render_template("index.html")
 
 
 @app.route("/test", methods=["GET", "POST"])
 def test():
-    sid, dane = get_server_session()
-    token = dane.get("token")
-    test_id = dane.get("test_id")
-    if not token or not test_id:
+    token = session.get("token")
+    if not token:
         return redirect(url_for("index"))
 
-    wybrane_pytania_id = dane.get("wybrane_pytania_id")
-    if not wybrane_pytania_id:
-        with baza() as conn:
-            test_wiersz = conn.execute(
-                "SELECT liczba_pytan_do_losowania FROM testy WHERE id = ?", (test_id,)
-            ).fetchone()
-            liczba_pytan = test_wiersz["liczba_pytan_do_losowania"] if test_wiersz else 20
-            wiersze = conn.execute(
-                "SELECT id FROM pytania WHERE test_id = ? ORDER BY RANDOM() LIMIT ?",
-                (test_id, liczba_pytan),
-            ).fetchall()
-        wybrane_pytania_id = [w["id"] for w in wiersze]
-        dane["wybrane_pytania_id"] = wybrane_pytania_id
-        dane["udzielone_odpowiedzi"] = {}
-        dane["indeks_pytania"] = 0
-        save_server_session(sid, dane)
+    with baza() as conn:
+        podejscie = conn.execute("SELECT * FROM podejscia WHERE token = ?", (token,)).fetchone()
 
+    if podejscie is None or podejscie["status"] != "w_trakcie":
+        session.pop("token", None)
+        return redirect(url_for("index"))
+
+    wybrane_pytania_id = json.loads(podejscie["wybrane_pytania"])
     if not wybrane_pytania_id:
         # Test bez pytań (B12) — bez tego GET /test i GET /wynik przekierowują
         # do siebie nawzajem w nieskończoność.
-        clear_server_session(sid)
+        session.pop("token", None)
         flash("Ten test nie ma jeszcze żadnych pytań. Skontaktuj się z organizatorem.", "blad")
         return redirect(url_for("index"))
 
-    udzielone_odpowiedzi = dane.get("udzielone_odpowiedzi", {})
-    indeks = dane.get("indeks_pytania", 0)
+    indeks = podejscie["indeks_pytania"]
 
     if request.method == "POST":
         pytanie_id = request.form.get("pytanie_id")
@@ -246,14 +228,23 @@ def test():
             flash("Zaznacz odpowiedź, aby przejść dalej.", "blad")
             return redirect(url_for("test"))
 
-        udzielone_odpowiedzi[pytanie_id] = odpowiedz
-        indeks += 1
-        dane["udzielone_odpowiedzi"] = udzielone_odpowiedzi
-        dane["indeks_pytania"] = indeks
-        save_server_session(sid, dane)
-
-        if indeks >= len(wybrane_pytania_id):
-            return redirect(url_for("wynik"))
+        teraz = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with baza() as conn:
+            # Zapis odpowiedzi od razu (L1) — przetrwa utratę ciasteczka/sesji.
+            # UNIQUE(token, pytanie_id) + OR IGNORE chroni przed duplikatem (B8).
+            conn.execute(
+                "INSERT OR IGNORE INTO odpowiedzi_uzytkownika (token, pytanie_id, odpowiedz, data_wyslania) VALUES (?, ?, ?, ?)",
+                (token, int(pytanie_id), odpowiedz, teraz),
+            )
+            # UPDATE...WHERE indeks_pytania=? to atomowe zabezpieczenie: jeśli
+            # dwa równoczesne żądania (podwójne kliknięcie „Dalej”/„Zakończ
+            # test”, albo dwa urządzenia naraz) trafią tu z tym samym stanem,
+            # tylko jedno przesunie indeks — drugie po prostu przekierowuje do
+            # aktualnego stanu (B8).
+            conn.execute(
+                "UPDATE podejscia SET indeks_pytania = indeks_pytania + 1 WHERE token = ? AND indeks_pytania = ?",
+                (token, indeks),
+            )
         return redirect(url_for("test"))
 
     if indeks >= len(wybrane_pytania_id):
@@ -277,29 +268,27 @@ def test():
 
 @app.route("/wynik", methods=["GET"])
 def wynik():
-    sid, dane = get_server_session()
-    token = dane.get("token")
+    token = session.get("token")
     if not token:
         return redirect(url_for("index"))
 
-    wybrane_pytania_id = dane.get("wybrane_pytania_id") or []
-    udzielone_odpowiedzi = dane.get("udzielone_odpowiedzi") or {}
-    if not wybrane_pytania_id or len(udzielone_odpowiedzi) < len(wybrane_pytania_id):
-        return redirect(url_for("test"))
-
-    teraz = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with baza() as conn:
-        juz_zapisane = conn.execute(
-            "SELECT 1 FROM odpowiedzi_uzytkownika WHERE token = ? LIMIT 1", (token,)
-        ).fetchone()
-        if not juz_zapisane:
-            conn.executemany(
-                """
-                INSERT INTO odpowiedzi_uzytkownika (token, pytanie_id, odpowiedz, data_wyslania)
-                VALUES (?, ?, ?, ?)
-                """,
-                [(token, int(pid), odp, teraz) for pid, odp in udzielone_odpowiedzi.items()],
+        podejscie = conn.execute("SELECT * FROM podejscia WHERE token = ?", (token,)).fetchone()
+        if podejscie is None:
+            session.pop("token", None)
+            return redirect(url_for("index"))
+
+        wybrane_pytania_id = json.loads(podejscie["wybrane_pytania"])
+        if podejscie["indeks_pytania"] < len(wybrane_pytania_id):
+            return redirect(url_for("test"))
+
+        if podejscie["status"] != "zakonczone":
+            teraz = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            conn.execute(
+                "UPDATE podejscia SET status = 'zakonczone', data_zakonczenia = ? WHERE token = ? AND status = 'w_trakcie'",
+                (teraz, token),
             )
+
         wiersze = conn.execute(
             """
             SELECT ou.odpowiedz AS dana, p.odpowiedz AS poprawna
@@ -311,9 +300,11 @@ def wynik():
         ).fetchall()
 
     poprawne = sum(1 for w in wiersze if w["dana"] == w["poprawna"])
-    wszystkie = len(wiersze)
+    # Mianownik to liczba wylosowanych pytań podejścia, nie COUNT() udzielonych
+    # odpowiedzi (L3) — dla normalnie ukończonego testu te liczby są równe.
+    wszystkie = len(wybrane_pytania_id)
 
-    clear_server_session(sid)
+    session.pop("token", None)
 
     return render_template("wynik.html", poprawne=poprawne, wszystkie=wszystkie)
 
@@ -545,10 +536,17 @@ def admin_tokeny(test_id):
     nowe_tokeny = session.pop("nowe_tokeny", None)
 
     with baza() as conn:
+        # Status tokenu (UI8): brak podejścia -> "wolny", w_trakcie/zakonczone
+        # wprost z podejscia.status.
         tokeny = conn.execute(
             """
-            SELECT token, wykorzystany, data_utworzenia, data_wykorzystania, przypisany
-            FROM tokeny WHERE test_id = ? ORDER BY data_utworzenia DESC
+            SELECT
+                tk.token, tk.wykorzystany, tk.data_utworzenia, tk.data_wykorzystania, tk.przypisany,
+                COALESCE(pj.status, 'wolny') AS status
+            FROM tokeny tk
+            LEFT JOIN podejscia pj ON pj.token = tk.token
+            WHERE tk.test_id = ?
+            ORDER BY tk.data_utworzenia DESC
             """,
             (test_id,),
         ).fetchall()
@@ -559,6 +557,22 @@ def admin_tokeny(test_id):
         tokeny=[dict(t) for t in tokeny],
         nowe_tokeny=nowe_tokeny,
     )
+
+
+@app.route("/admin/tokeny/<token>/reset", methods=["POST"])
+@wymaga_admina
+@csrf_chroniony
+def admin_reset_token(token):
+    """Akcja admina (L2) — reset tokenu: kasuje trwające/zakończone podejście
+    i dotychczasowe odpowiedzi, uczestnik zaczyna od nowa tym samym tokenem."""
+    test_id = request.form.get("test_id")
+    if resetuj_token(token):
+        flash(f"Token {token} został zresetowany — można go użyć ponownie od nowa.", "ok")
+    else:
+        flash("Nie znaleziono tokenu.", "blad")
+    if test_id and test_id.isdigit():
+        return redirect(url_for("admin_tokeny", test_id=int(test_id)))
+    return redirect(url_for("admin_panel"))
 
 
 @app.route("/admin/tokeny/<token>/przypisz", methods=["POST"])

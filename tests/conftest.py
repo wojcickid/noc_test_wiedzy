@@ -1,8 +1,8 @@
-"""Wspólne fixture'y pytest — izolowana baza SQLite i katalog sesji dla każdego testu.
+"""Wspólne fixture'y pytest — izolowana baza SQLite dla każdego testu.
 
 Uwaga: `test_wiedzy_app` przy imporcie modułu wczytuje/tworzy prawdziwe pliki projektu
 `.flask_secret_key` i `.admin_haslo` (S4, Etap 0 — znane ograniczenie, patrz sekcja 0.5
-w PLAN_POPRAWEK.md). Sama baza danych i katalog sesji są w pełni izolowane per test.
+w PLAN_POPRAWEK.md). Sama baza danych jest w pełni izolowana per test.
 """
 
 import sys
@@ -28,13 +28,9 @@ PYTANIA_TESTOWE = pd.DataFrame(
 
 @pytest.fixture
 def klient(tmp_path, monkeypatch):
-    """Klient testowy Flaska z izolowaną, tymczasową bazą SQLite i katalogiem sesji."""
+    """Klient testowy Flaska z izolowaną, tymczasową bazą SQLite."""
     monkeypatch.setattr(db, "DB_PLIK", str(tmp_path / "test.db"))
     db.inicjalizuj()
-
-    katalog_sesji = tmp_path / "flask_session"
-    katalog_sesji.mkdir()
-    monkeypatch.setattr(app_module, "SESSION_DIR", str(katalog_sesji))
 
     app_module.app.config.update(TESTING=True)
     with app_module.app.test_client() as c:
