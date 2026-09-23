@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS testy (
     wynik_widoczny TEXT NOT NULL DEFAULT 'od_razu',
     dostepny_od TEXT,
     dostepny_do TEXT,
-    zamkniety INTEGER NOT NULL DEFAULT 0
+    zamkniety INTEGER NOT NULL DEFAULT 0,
+    prog_zaliczenia INTEGER DEFAULT 80
 );
 
 CREATE TABLE IF NOT EXISTS pytania (
@@ -155,7 +156,9 @@ SELECT
             WHERE ou.token = pj.token AND ou.odpowiedz = p.odpowiedz
         ) / pj.liczba_pytan, 1
     ) AS procent,
-    pj.data_zakonczenia AS data_wyslania
+    pj.data_zakonczenia AS data_wyslania,
+    pj.data_rozpoczecia AS data_rozpoczecia,
+    pj.status AS status
 FROM podejscia pj
 JOIN tokeny tk ON tk.token = pj.token
 JOIN testy t ON t.id = tk.test_id
@@ -196,6 +199,10 @@ def _migruj_tabele(conn):
         conn.execute("ALTER TABLE testy ADD COLUMN dostepny_do TEXT")
     if "zamkniety" not in kolumny_testy:
         conn.execute("ALTER TABLE testy ADD COLUMN zamkniety INTEGER NOT NULL DEFAULT 0")
+    # Etap 5 (E2) — próg zaliczenia w procentach, NULL = bez progu. Domyślne
+    # 80% dostają też testy istniejące przed migracją (decyzja usera z Etapu 5).
+    if "prog_zaliczenia" not in kolumny_testy:
+        conn.execute("ALTER TABLE testy ADD COLUMN prog_zaliczenia INTEGER DEFAULT 80")
 
     _odtworz_historyczne_podejscia(conn)
 
@@ -466,43 +473,43 @@ TRYBY_WYNIKU = {"od_razu", "razem_ze_szczegolami"}
 FORMAT_DATY = "%Y-%m-%d %H:%M:%S"
 
 
+# Znacznik „nie zmieniaj” dla parametrów, w których None ma własne znaczenie
+# (np. prog_zaliczenia=None to „bez progu”, a nie „zostaw jak było”).
+BEZ_ZMIAN = object()
+
+
 def zapisz_ustawienia_testu(
     test_id, limit_czasu_min, tryb_szczegolow, szczegoly_od, wynik_widoczny, dostepny_od, dostepny_do,
-    liczba_pytan_do_losowania=None,
+    liczba_pytan_do_losowania=None, prog_zaliczenia=BEZ_ZMIAN,
 ):
     """Aktualizuje ustawienia kontroli nad testem (Etap 4, F1/F2). Zmiana
     działa też na trwające podejścia, bo ustawienia są czytane na żywo przy
     każdym wejściu na `/test` — zgodnie z decyzją usera z Etapu 4.
     `liczba_pytan_do_losowania=None` zostawia dotychczasową wartość bez zmian
-    (np. wywołania z testów, które jej nie dotyczą)."""
+    (np. wywołania z testów, które jej nie dotyczą). `prog_zaliczenia` (E2,
+    Etap 5) to procent 1–100 albo None (bez progu); pominięty — bez zmian."""
     if tryb_szczegolow not in TRYBY_SZCZEGOLOW:
         raise ValueError(f"Nieprawidłowy tryb szczegółów: {tryb_szczegolow}")
     if wynik_widoczny not in TRYBY_WYNIKU:
         raise ValueError(f"Nieprawidłowy tryb widoczności wyniku: {wynik_widoczny}")
+    if prog_zaliczenia is not BEZ_ZMIAN and prog_zaliczenia is not None and not 1 <= prog_zaliczenia <= 100:
+        raise ValueError("Próg zaliczenia musi być od 1 do 100%.")
+
+    kolumny = ["limit_czasu_min", "tryb_szczegolow", "szczegoly_od", "wynik_widoczny", "dostepny_od", "dostepny_do"]
+    wartosci = [limit_czasu_min, tryb_szczegolow, szczegoly_od, wynik_widoczny, dostepny_od, dostepny_do]
+    if liczba_pytan_do_losowania is not None:
+        kolumny.append("liczba_pytan_do_losowania")
+        wartosci.append(liczba_pytan_do_losowania)
+    if prog_zaliczenia is not BEZ_ZMIAN:
+        kolumny.append("prog_zaliczenia")
+        wartosci.append(prog_zaliczenia)
+
+    # Nazwy kolumn pochodzą wyłącznie z powyższej stałej listy, nie z wejścia.
     with baza() as conn:
-        if liczba_pytan_do_losowania is None:
-            cur = conn.execute(
-                """
-                UPDATE testy SET
-                    limit_czasu_min = ?, tryb_szczegolow = ?, szczegoly_od = ?,
-                    wynik_widoczny = ?, dostepny_od = ?, dostepny_do = ?
-                WHERE id = ?
-                """,
-                (limit_czasu_min, tryb_szczegolow, szczegoly_od, wynik_widoczny, dostepny_od, dostepny_do, test_id),
-            )
-        else:
-            cur = conn.execute(
-                """
-                UPDATE testy SET
-                    limit_czasu_min = ?, tryb_szczegolow = ?, szczegoly_od = ?,
-                    wynik_widoczny = ?, dostepny_od = ?, dostepny_do = ?, liczba_pytan_do_losowania = ?
-                WHERE id = ?
-                """,
-                (
-                    limit_czasu_min, tryb_szczegolow, szczegoly_od, wynik_widoczny, dostepny_od, dostepny_do,
-                    liczba_pytan_do_losowania, test_id,
-                ),
-            )
+        cur = conn.execute(
+            f"UPDATE testy SET {', '.join(f'{k} = ?' for k in kolumny)} WHERE id = ?",
+            (*wartosci, test_id),
+        )
     return cur.rowcount > 0
 
 
@@ -548,3 +555,132 @@ def domknij_przeterminowane_podejscia(test_id=None):
                     "UPDATE podejscia SET status = 'czas_minal', data_zakonczenia = ? WHERE token = ? AND status = 'w_trakcie'",
                     (teraz.strftime(FORMAT_DATY), wiersz["token"]),
                 )
+
+
+def czy_zaliczony(procent, prog_zaliczenia):
+    """Zdał/nie zdał (E2) — None, gdy test nie ma ustawionego progu."""
+    if prog_zaliczenia is None:
+        return None
+    return procent >= prog_zaliczenia
+
+
+def szczegoly_podejsc_testu(test_id):
+    """Dane do szczegółowego eksportu (E1) — dla każdego zakończonego podejścia
+    wszystkie wylosowane pytania w kolejności wyświetlania, także te bez
+    odpowiedzi (np. gdy minął czas), których nie ma w widoku arkusz_wynikow."""
+    with baza() as conn:
+        podejscia = conn.execute(
+            """
+            SELECT pj.token AS token, tk.przypisany AS przypisany, pj.wybrane_pytania AS wybrane_pytania
+            FROM podejscia pj
+            JOIN tokeny tk ON tk.token = pj.token
+            WHERE pj.test_id = ? AND pj.status IN ('zakonczone', 'czas_minal')
+            ORDER BY pj.data_zakonczenia, pj.token
+            """,
+            (test_id,),
+        ).fetchall()
+        pytania = {
+            w["id"]: w
+            for w in conn.execute("SELECT * FROM pytania WHERE test_id = ?", (test_id,)).fetchall()
+        }
+        odpowiedzi = {
+            (w["token"], w["pytanie_id"]): w["odpowiedz"]
+            for w in conn.execute(
+                """
+                SELECT ou.token, ou.pytanie_id, ou.odpowiedz
+                FROM odpowiedzi_uzytkownika ou JOIN podejscia pj ON pj.token = ou.token
+                WHERE pj.test_id = ?
+                """,
+                (test_id,),
+            ).fetchall()
+        }
+
+    wynik = []
+    for podejscie in podejscia:
+        for numer, pytanie_id in enumerate(json.loads(podejscie["wybrane_pytania"]), start=1):
+            pytanie = pytania.get(pytanie_id)
+            if pytanie is None:
+                continue
+            dana = odpowiedzi.get((podejscie["token"], pytanie_id))
+            wynik.append(
+                {
+                    "token": podejscie["token"],
+                    "przypisany": podejscie["przypisany"],
+                    "numer": numer,
+                    "tresc_pytania": pytanie["tresc_pytania"],
+                    "odpowiedz_uzytkownika": dana,
+                    "tresc_odpowiedzi_uzytkownika": pytanie[f"opcja_{dana.lower()}"] if dana else None,
+                    "poprawna_odpowiedz": pytanie["odpowiedz"],
+                    "tresc_poprawnej_odpowiedzi": pytanie[f"opcja_{pytanie['odpowiedz'].lower()}"],
+                    "czy_poprawna": dana == pytanie["odpowiedz"],
+                }
+            )
+    return wynik
+
+
+def statystyki_pytan(test_id):
+    """Statystyki per pytanie z banku (E3) na podstawie zakończonych podejść:
+    ile razy pytanie wylosowano, ile było poprawnych odpowiedzi, rozkład
+    wyborów A–D i brak odpowiedzi. Procent poprawnych liczony od liczby
+    wylosowań — pytanie bez odpowiedzi liczy się jako błędne, tak jak w
+    wyniku uczestnika (L3). Posortowane od najsłabiej rozwiązywanych, bo po
+    to są te statystyki: pytanie z bardzo niskim wynikiem to często zła litera
+    w pliku albo temat do powtórzenia na szkoleniu."""
+    with baza() as conn:
+        pytania = conn.execute("SELECT * FROM pytania WHERE test_id = ? ORDER BY id", (test_id,)).fetchall()
+        podejscia = conn.execute(
+            "SELECT wybrane_pytania FROM podejscia WHERE test_id = ? AND status IN ('zakonczone', 'czas_minal')",
+            (test_id,),
+        ).fetchall()
+        odpowiedzi = conn.execute(
+            """
+            SELECT ou.pytanie_id AS pytanie_id, ou.odpowiedz AS odpowiedz, COUNT(*) AS ile
+            FROM odpowiedzi_uzytkownika ou JOIN podejscia pj ON pj.token = ou.token
+            WHERE pj.test_id = ? AND pj.status IN ('zakonczone', 'czas_minal')
+            GROUP BY ou.pytanie_id, ou.odpowiedz
+            """,
+            (test_id,),
+        ).fetchall()
+
+    wylosowania = {}
+    for podejscie in podejscia:
+        for pytanie_id in json.loads(podejscie["wybrane_pytania"]):
+            wylosowania[pytanie_id] = wylosowania.get(pytanie_id, 0) + 1
+
+    rozklady = {}
+    for w in odpowiedzi:
+        rozklady.setdefault(w["pytanie_id"], {})[w["odpowiedz"]] = w["ile"]
+
+    statystyki = []
+    for pytanie in pytania:
+        ile_razy = wylosowania.get(pytanie["id"], 0)
+        rozklad = {litera: rozklady.get(pytanie["id"], {}).get(litera, 0) for litera in "ABCD"}
+        poprawne = rozklad[pytanie["odpowiedz"]]
+        statystyki.append(
+            {
+                "tresc_pytania": pytanie["tresc_pytania"],
+                "poprawna_odpowiedz": pytanie["odpowiedz"],
+                "wylosowane": ile_razy,
+                "poprawne": poprawne,
+                "procent": round(100 * poprawne / ile_razy, 1) if ile_razy else None,
+                "rozklad": rozklad,
+                "bez_odpowiedzi": max(0, ile_razy - sum(rozklad.values())),
+            }
+        )
+    # Pytania jeszcze nigdy niewylosowane (procent None) na końcu listy.
+    statystyki.sort(key=lambda s: (s["procent"] is None, s["procent"] or 0))
+    return statystyki
+
+
+def kopia_bazy():
+    """Spójna kopia całej bazy jako bajty (S7) — `backup()` z SQLite działa
+    poprawnie także w trakcie zapisów (WAL), w przeciwieństwie do zwykłego
+    skopiowania pliku baza.db, który może nie zawierać zmian z baza.db-wal."""
+    zrodlo = polacz()
+    kopia = sqlite3.connect(":memory:")
+    try:
+        zrodlo.backup(kopia)
+        return kopia.serialize()
+    finally:
+        kopia.close()
+        zrodlo.close()

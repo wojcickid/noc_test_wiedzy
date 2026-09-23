@@ -44,6 +44,32 @@
 
 <h2>Wszystkie tokeny ({{ tokeny|length }})</h2>
 {% if tokeny %}
+<div class="akcje-tokenow">
+    <button type="button" id="kopiuj-tokeny">Kopiuj wszystkie</button>
+    <a class="btn" href="{{ url_for('admin_eksport_tokenow', test_id=test.id) }}">Eksportuj do CSV</a>
+    <span id="kopiuj-komunikat" class="komunikat-ok"></span>
+</div>
+<textarea id="tokeny-do-skopiowania" class="ukryte" readonly aria-hidden="true">{{ tekst_do_skopiowania }}</textarea>
+<script>
+    // Format: uczestnik<TAB>token — po wklejeniu do Excela daje dwie kolumny.
+    // navigator.clipboard działa tylko na HTTPS/localhost, a appka w sieci
+    // firmowej chodzi po zwykłym HTTP, stąd zapasowe execCommand("copy").
+    document.getElementById("kopiuj-tokeny").addEventListener("click", function () {
+        var pole = document.getElementById("tokeny-do-skopiowania");
+        var komunikat = document.getElementById("kopiuj-komunikat");
+        function potwierdz() { komunikat.textContent = "Skopiowano do schowka."; }
+        function zapasowo() {
+            pole.select();
+            var ok = document.execCommand("copy");
+            komunikat.textContent = ok ? "Skopiowano do schowka." : "Nie udało się skopiować — użyj eksportu CSV.";
+        }
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(pole.value).then(potwierdz, zapasowo);
+        } else {
+            zapasowo();
+        }
+    });
+</script>
 <table class="szczegoly">
     <thead>
         <tr>
@@ -73,7 +99,7 @@
                 </form>
             </td>
             <td>
-                {{ {"wolny": "wolny", "w_trakcie": "w trakcie", "zakonczone": "ukończony", "czas_minal": "czas minął"}[token.status] }}
+                {{ etykiety_statusow[token.status] }}
                 {% if token.wykorzystany %}
                 <form class="resetuj" action="{{ url_for('admin_reset_token', token=token.token) }}" method="post" onsubmit="return confirm('Zresetować ten token? Dotychczasowe odpowiedzi zostaną usunięte.');">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

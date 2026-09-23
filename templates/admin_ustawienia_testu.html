@@ -22,6 +22,9 @@
     <label for="limit_czasu_min">Limit czasu na test (w minutach — puste pole = brak limitu):</label>
     <input type="number" id="limit_czasu_min" name="limit_czasu_min" min="1" value="{{ test.limit_czasu_min or '' }}">
 
+    <label for="prog_zaliczenia">Próg zaliczenia w % (puste pole = bez progu i bez informacji zdał/nie zdał):</label>
+    <input type="number" id="prog_zaliczenia" name="prog_zaliczenia" min="1" max="100" value="{{ test.prog_zaliczenia if test.prog_zaliczenia is not none else '' }}">
+
     <label for="wynik_widoczny">Widoczność wyniku punktowego dla uczestnika:</label>
     <select id="wynik_widoczny" name="wynik_widoczny">
         <option value="od_razu" {% if test.wynik_widoczny == "od_razu" %}selected{% endif %}>Od razu po teście</option>

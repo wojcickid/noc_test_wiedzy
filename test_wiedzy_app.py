@@ -1,5 +1,6 @@
 import base64
 import binascii
+import csv
 import io
 import json
 import os
@@ -17,13 +18,17 @@ from db import (
     TRYBY_SZCZEGOLOW,
     TRYBY_WYNIKU,
     baza,
+    czy_zaliczony,
     domknij_przeterminowane_podejscia,
     importuj_pytania,
     inicjalizuj,
+    kopia_bazy,
     losowy_kod,
     oblicz_termin,
     przypisz_token,
     resetuj_token,
+    statystyki_pytan,
+    szczegoly_podejsc_testu,
     ustaw_zamkniecie_testu,
     wczytaj_i_zwaliduj_plik_pytan,
     wygeneruj_tokeny,
@@ -297,7 +302,11 @@ def sprawdz_i_domknij_jesli_czas_minal(conn, token, podejscie, test):
     return True
 
 
+# Etykiety statusów tokenu/podejścia (UI8) — wspólne dla tabel panelu i eksportów.
+ETYKIETY_STATUSOW = {"wolny": "wolny", "w_trakcie": "w trakcie", "zakonczone": "ukończony", "czas_minal": "czas minął"}
+
 app.jinja_env.globals["csrf_token"] = generuj_csrf_token
+app.jinja_env.globals["etykiety_statusow"] = ETYKIETY_STATUSOW
 app.jinja_env.filters["data_pl"] = sformatuj_date_pl
 
 
@@ -512,6 +521,8 @@ def wynik():
         pokaz_wynik=pokaz_wynik,
         komunikat_wynik=komunikat_wynik,
         czas_minal=(status == "czas_minal"),
+        prog_zaliczenia=test_dict["prog_zaliczenia"],
+        zaliczony=czy_zaliczony(procent, test_dict["prog_zaliczenia"]),
     )
 
 
@@ -533,8 +544,9 @@ def sprawdz_wynik():
                 "SELECT * FROM arkusz_wynikow WHERE token = ?",
                 (token,),
             ).fetchall()
+            podejscie = conn.execute("SELECT liczba_pytan FROM podejscia WHERE token = ?", (token,)).fetchone()
 
-        if not wiersze or test_wiersz is None:
+        if not wiersze or test_wiersz is None or podejscie is None:
             flash("Nie znaleziono wyników dla podanego tokenu — test mógł nie zostać jeszcze ukończony.", "info")
             return redirect(url_for("sprawdz_wynik"))
 
@@ -545,7 +557,9 @@ def sprawdz_wynik():
 
         szczegoly = [dict(w) for w in wiersze]
         poprawne = sum(1 for w in szczegoly if w["odpowiedz_uzytkownika"] == w["poprawna_odpowiedz"])
-        wszystkie = len(szczegoly)
+        # Mianownik z podejścia (L3), nie liczba udzielonych odpowiedzi — przy
+        # „czas minął” te liczby się różnią, a od procentu zależy zdał/nie zdał (E2).
+        wszystkie = podejscie["liczba_pytan"]
         procent = round(100 * poprawne / wszystkie, 1) if wszystkie else 0
         return render_template(
             "sprawdz_wynik.html",
@@ -558,6 +572,8 @@ def sprawdz_wynik():
             komunikat_wynik=komunikat_wynik,
             pokaz_szczegoly=pokaz_szczegoly,
             komunikat_szczegoly=komunikat_szczegoly,
+            prog_zaliczenia=test_dict["prog_zaliczenia"],
+            zaliczony=czy_zaliczony(procent, test_dict["prog_zaliczenia"]),
         )
     return render_template("sprawdz_wynik.html", pokaz_formularz=True)
 
@@ -732,11 +748,128 @@ def admin_test(test_id):
         wyniki = conn.execute(
             "SELECT * FROM zbiorcze_wyniki WHERE test_id = ? ORDER BY data_wyslania DESC", (test_id,)
         ).fetchall()
+    wyniki = [dict(w) for w in wyniki]
+    for w in wyniki:
+        w["zaliczony"] = czy_zaliczony(w["procent"], test["prog_zaliczenia"])
     return render_template(
         "admin_test.html",
         test=dict(test),
         liczba_pytan=liczba_pytan,
-        wyniki=[dict(w) for w in wyniki],
+        wyniki=wyniki,
+    )
+
+
+def _data_z_bazy(wartosc):
+    """Tekst daty z bazy -> datetime, żeby Excel dostał prawdziwą datę, a
+    nie tekst (sortowanie, filtry). Nieczytelne/puste wartości -> None."""
+    try:
+        return datetime.strptime(wartosc, FORMAT_DATY) if wartosc else None
+    except ValueError:
+        return None
+
+
+def _nazwa_pliku(nazwa_testu, sufiks):
+    """Bezpieczna nazwa pobieranego pliku — tylko litery/cyfry z nazwy testu."""
+    czysta = "".join(z if z.isalnum() else "_" for z in nazwa_testu).strip("_") or "test"
+    return f"{czysta}_{sufiks}"
+
+
+@app.route("/admin/testy/<int:test_id>/wyniki.xlsx")
+@wymaga_admina
+def admin_eksport_wynikow(test_id):
+    """Eksport wyników do XLSX (E1/UI10) — arkusz zbiorczy (osoba = wiersz)
+    i szczegółowy (odpowiedź = wiersz), z przypisanym imieniem/mailem."""
+    domknij_przeterminowane_podejscia(test_id)
+    with baza() as conn:
+        test = conn.execute("SELECT * FROM testy WHERE id = ?", (test_id,)).fetchone()
+        if test is None:
+            flash("Nie znaleziono testu.", "blad")
+            return redirect(url_for("admin_panel"))
+        wyniki = conn.execute(
+            "SELECT * FROM zbiorcze_wyniki WHERE test_id = ? ORDER BY data_wyslania", (test_id,)
+        ).fetchall()
+    prog = test["prog_zaliczenia"]
+
+    skoroszyt = openpyxl.Workbook()
+    zbiorczo = skoroszyt.active
+    zbiorczo.title = "Zbiorczo"
+    naglowki = [
+        "Token", "Uczestnik", "Status", "Rozpoczęto", "Zakończono", "Czas trwania",
+        "Poprawne", "Wszystkie", "Procent",
+    ]
+    if prog is not None:
+        naglowki.append(f"Zaliczenie (próg {prog}%)")
+    zbiorczo.append(naglowki)
+    for w in wyniki:
+        rozpoczeto = _data_z_bazy(w["data_rozpoczecia"])
+        zakonczono = _data_z_bazy(w["data_wyslania"])
+        wiersz = [
+            w["token"], w["przypisany"] or "", ETYKIETY_STATUSOW.get(w["status"], w["status"]),
+            rozpoczeto, zakonczono, (zakonczono - rozpoczeto) if rozpoczeto and zakonczono else None,
+            w["poprawne"], w["wszystkie"], (w["procent"] or 0) / 100,
+        ]
+        if prog is not None:
+            wiersz.append("zdał" if czy_zaliczony(w["procent"], prog) else "nie zdał")
+        zbiorczo.append(wiersz)
+    for komorka in zbiorczo["D"][1:] + zbiorczo["E"][1:]:
+        komorka.number_format = "DD.MM.YYYY HH:MM"
+    for komorka in zbiorczo["F"][1:]:
+        komorka.number_format = "[h]:mm:ss"
+    for komorka in zbiorczo["I"][1:]:
+        komorka.number_format = "0.0%"
+
+    szczegolowo = skoroszyt.create_sheet("Szczegółowo")
+    szczegolowo.append([
+        "Token", "Uczestnik", "Nr pytania", "Pytanie", "Odpowiedź uczestnika", "Poprawna odpowiedź", "Wynik",
+    ])
+    for w in szczegoly_podejsc_testu(test_id):
+        szczegolowo.append([
+            w["token"], w["przypisany"] or "", w["numer"], w["tresc_pytania"],
+            f"{w['odpowiedz_uzytkownika']}) {w['tresc_odpowiedzi_uzytkownika']}"
+            if w["odpowiedz_uzytkownika"] else "brak odpowiedzi",
+            f"{w['poprawna_odpowiedz']}) {w['tresc_poprawnej_odpowiedzi']}",
+            "poprawna" if w["czy_poprawna"] else "błędna",
+        ])
+
+    for arkusz in (zbiorczo, szczegolowo):
+        arkusz.freeze_panes = "A2"
+        for kolumna in arkusz.columns:
+            szerokosc = max(len(str(k.value)) if k.value is not None else 0 for k in kolumna)
+            arkusz.column_dimensions[kolumna[0].column_letter].width = min(max(szerokosc + 2, 10), 60)
+
+    bufor = io.BytesIO()
+    skoroszyt.save(bufor)
+    bufor.seek(0)
+    return send_file(
+        bufor,
+        as_attachment=True,
+        download_name=_nazwa_pliku(test["nazwa"], "wyniki.xlsx"),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@app.route("/admin/testy/<int:test_id>/statystyki")
+@wymaga_admina
+def admin_statystyki(test_id):
+    """Statystyki pytań (E3) — % poprawnych i rozkład wyborów A–D."""
+    domknij_przeterminowane_podejscia(test_id)
+    with baza() as conn:
+        test = conn.execute("SELECT * FROM testy WHERE id = ?", (test_id,)).fetchone()
+    if test is None:
+        flash("Nie znaleziono testu.", "blad")
+        return redirect(url_for("admin_panel"))
+    return render_template("admin_statystyki.html", test=dict(test), statystyki=statystyki_pytan(test_id))
+
+
+@app.route("/admin/kopia-bazy")
+@wymaga_admina
+def admin_kopia_bazy():
+    """Pobranie kopii całej bazy (S7). Przywracanie: patrz README."""
+    return send_file(
+        io.BytesIO(kopia_bazy()),
+        as_attachment=True,
+        download_name=f"baza-{datetime.now().strftime('%Y-%m-%d-%H%M')}.db",
+        mimetype="application/vnd.sqlite3",
     )
 
 
@@ -810,11 +943,50 @@ def admin_tokeny(test_id):
             (test_id,),
         ).fetchall()
 
+    tokeny = [dict(t) for t in tokeny]
     return render_template(
         "admin_tokeny.html",
         test=dict(test),
-        tokeny=[dict(t) for t in tokeny],
+        tokeny=tokeny,
         nowe_tokeny=nowe_tokeny,
+        # Format „Kopiuj wszystkie” (UI9): uczestnik<TAB>token, linia na token —
+        # wkleja się do Excela jako dwie kolumny.
+        tekst_do_skopiowania="\n".join(f"{t['przypisany'] or ''}\t{t['token']}" for t in tokeny),
+    )
+
+
+@app.route("/admin/testy/<int:test_id>/tokeny.csv")
+@wymaga_admina
+def admin_eksport_tokenow(test_id):
+    """Eksport tokenów do CSV (UI9) — UTF-8 z BOM i średnik jako separator,
+    bo tylko tak polski Excel otwiera plik dwuklikiem z poprawnymi znakami."""
+    domknij_przeterminowane_podejscia(test_id)
+    with baza() as conn:
+        test = conn.execute("SELECT * FROM testy WHERE id = ?", (test_id,)).fetchone()
+        if test is None:
+            flash("Nie znaleziono testu.", "blad")
+            return redirect(url_for("admin_panel"))
+        tokeny = conn.execute(
+            """
+            SELECT tk.token, tk.przypisany, COALESCE(pj.status, 'wolny') AS status
+            FROM tokeny tk
+            LEFT JOIN podejscia pj ON pj.token = tk.token
+            WHERE tk.test_id = ?
+            ORDER BY tk.data_utworzenia DESC
+            """,
+            (test_id,),
+        ).fetchall()
+
+    bufor = io.StringIO()
+    zapis = csv.writer(bufor, delimiter=";", lineterminator="\r\n")
+    zapis.writerow(["token", "przypisany", "status"])
+    for t in tokeny:
+        zapis.writerow([t["token"], t["przypisany"] or "", ETYKIETY_STATUSOW.get(t["status"], t["status"])])
+    return send_file(
+        io.BytesIO(bufor.getvalue().encode("utf-8-sig")),
+        as_attachment=True,
+        download_name=_nazwa_pliku(test["nazwa"], "tokeny.csv"),
+        mimetype="text/csv",
     )
 
 
@@ -883,6 +1055,17 @@ def admin_ustawienia_testu(test_id):
                 flash("Limit czasu musi być dodatnią liczbą minut (albo puste pole — brak limitu).", "blad")
                 return redirect(url_for("admin_ustawienia_testu", test_id=test_id))
 
+        prog_tekst = (request.form.get("prog_zaliczenia") or "").strip()
+        prog_zaliczenia = None
+        if prog_tekst:
+            try:
+                prog_zaliczenia = int(prog_tekst)
+                if not 1 <= prog_zaliczenia <= 100:
+                    raise ValueError
+            except ValueError:
+                flash("Próg zaliczenia musi być liczbą od 1 do 100% (albo puste pole — bez progu).", "blad")
+                return redirect(url_for("admin_ustawienia_testu", test_id=test_id))
+
         tryb_szczegolow = request.form.get("tryb_szczegolow", "po_zamknieciu")
         wynik_widoczny = request.form.get("wynik_widoczny", "od_razu")
         if tryb_szczegolow not in TRYBY_SZCZEGOLOW or wynik_widoczny not in TRYBY_WYNIKU:
@@ -896,7 +1079,7 @@ def admin_ustawienia_testu(test_id):
 
         zapisz_ustawienia_testu(
             test_id, limit_czasu_min, tryb_szczegolow, szczegoly_od, wynik_widoczny, dostepny_od, dostepny_do,
-            liczba_pytan_do_losowania,
+            liczba_pytan_do_losowania, prog_zaliczenia,
         )
         ustaw_zamkniecie_testu(test_id, zamkniety)
 

@@ -10,6 +10,9 @@
     {% endif %}
     {% if pokaz_wynik %}
     <p><strong>Poprawne odpowiedzi: {{ poprawne }} / {{ wszystkie }} ({{ procent }}%)</strong></p>
+    {% if prog_zaliczenia is not none %}
+    <p class="{{ 'zaliczony' if zaliczony else 'niezaliczony' }}"><strong>{{ 'Test zaliczony' if zaliczony else 'Test niezaliczony' }}</strong> (próg zaliczenia: {{ prog_zaliczenia }}%)</p>
+    {% endif %}
     {% else %}
     <p>{{ komunikat_wynik }}</p>
     <p>Wynik będzie można sprawdzić później na stronie <a href="{{ url_for('sprawdz_wynik') }}">Sprawdź swój wynik</a>, podając swój token.</p>

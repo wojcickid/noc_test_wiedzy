@@ -254,3 +254,38 @@ form.resetuj button {
     font-size: 0.8em;
     margin-left: 8px;
 }
+.zaliczony {
+    color: #1e7e34;
+}
+.niezaliczony {
+    color: #c0392b;
+}
+.btn-drugorzedny {
+    background-color: #6c757d;
+}
+.btn-drugorzedny:hover {
+    background-color: #565e64;
+}
+.akcje-tokenow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 20px;
+}
+.akcje-tokenow button,
+.akcje-tokenow .btn {
+    margin: 0;
+}
+/* Poza ekranem, ale nie display:none — inaczej select() + execCommand("copy") nie działa. */
+.ukryte {
+    position: absolute;
+    left: -9999px;
+}
+table.szczegoly td.liczba {
+    text-align: right;
+    white-space: nowrap;
+}
+table.szczegoly td.wybor-poprawny {
+    font-weight: bold;
+    background-color: #e6f4ea;
+}

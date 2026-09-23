@@ -14,6 +14,9 @@
 <div class="wynik">
     {% if pokaz_wynik %}
     <p><strong>Wynik: {{ poprawne }} / {{ wszystkie }} ({{ procent }}%)</strong></p>
+    {% if prog_zaliczenia is not none %}
+    <p class="{{ 'zaliczony' if zaliczony else 'niezaliczony' }}"><strong>{{ 'Test zaliczony' if zaliczony else 'Test niezaliczony' }}</strong> (próg zaliczenia: {{ prog_zaliczenia }}%)</p>
+    {% endif %}
     {% else %}
     <p>{{ komunikat_wynik }}</p>
     {% endif %}

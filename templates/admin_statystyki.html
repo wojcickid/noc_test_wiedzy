@@ -1,0 +1,54 @@
+{% set klasa_body = "admin" %}
+{% extends "base.html" %}
+{% block tytul %}Statystyki pytań — {{ test.nazwa }}{% endblock %}
+{% block nav %}
+<nav class="admin-nav">
+    <a href="{{ url_for('admin_test', test_id=test.id) }}">← {{ test.nazwa }}</a>
+    <form action="{{ url_for('admin_logout') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="wyloguj">Wyloguj</button>
+    </form>
+</nav>
+{% endblock %}
+{% block naglowek %}Statystyki pytań — {{ test.nazwa }}{% endblock %}
+{% block tresc %}
+{% include "_komunikaty.html" %}
+<p>
+    Na podstawie zakończonych podejść. Procent poprawnych liczony od liczby wylosowań — brak odpowiedzi
+    (np. gdy minął czas) liczy się jako błędna. Najsłabiej rozwiązywane pytania są na górze: bardzo niski
+    wynik to często zła litera odpowiedzi w pliku albo temat do powtórzenia.
+</p>
+{% if statystyki %}
+<table class="szczegoly">
+    <thead>
+        <tr>
+            <th>Pytanie</th>
+            <th>Poprawna</th>
+            <th>Wylosowane</th>
+            <th>% poprawnych</th>
+            <th>A</th>
+            <th>B</th>
+            <th>C</th>
+            <th>D</th>
+            <th>Brak odp.</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for s in statystyki %}
+        <tr>
+            <td>{{ s.tresc_pytania }}</td>
+            <td>{{ s.poprawna_odpowiedz }}</td>
+            <td class="liczba">{{ s.wylosowane }}</td>
+            <td class="liczba">{{ '%.1f%%'|format(s.procent) if s.procent is not none else '—' }}</td>
+            {% for litera in "ABCD" %}
+            <td class="liczba{% if litera == s.poprawna_odpowiedz %} wybor-poprawny{% endif %}">{{ s.rozklad[litera] }}</td>
+            {% endfor %}
+            <td class="liczba">{{ s.bez_odpowiedzi }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>Ten test nie ma pytań.</p>
+{% endif %}
+{% endblock %}

@@ -132,8 +132,8 @@ Aktualizuj tę tabelę na końcu każdej sesji.
 | 1 Szybkie poprawki | zrobione (czeka na akceptację) | `etap-1-szybkie-poprawki` | 2026-09-23 | B2, B3/S3, B4, B7, B10, B11, B12, B14, B15, B16, B17, B18, B19, B20, UI1, UI3, UI4 — patrz sekcja 0.5 |
 | 2 Przebieg testu w bazie | zrobione (czeka na akceptację) | `etap-2-przebieg-testu-w-bazie` | 2026-09-23 | L1/S2, B1, B8, B9, B13, E13, L3, L2 (reset), UI8 (statusy) — patrz sekcja 0.5 |
 | 3 Import | zrobione (czeka na akceptację) | `etap-3-import` | 2026-09-23 | S1, B5, B6, L5, E4 — patrz sekcja 0.5 |
-| 4 Kontrola nad testem | zaakceptowane (ręczne testy usera OK), czeka na commit | `etap-4-kontrola-nad-testem` | 2026-09-23 | F1, F2, E14, UI5/UI6/UI7 — patrz sekcja 0.5 |
-| 5 Eksporty i raporty | do zrobienia | | | |
+| 4 Kontrola nad testem | zaakceptowane, zacommitowane (`9ad521e`) | `etap-4-kontrola-nad-testem` | 2026-09-23 | F1, F2, E14, UI5/UI6/UI7 — patrz sekcja 0.5 |
+| 5 Eksporty i raporty | zaakceptowane (ręczne testy usera OK) | `etap-5-eksporty-i-raporty` | 2026-09-23 | E1/UI10, UI9, E2, E3, S7 — patrz sekcja 0.5 |
 | 6 Maile | do zrobienia (zapytanie do IT: nie wysłane) | | | |
 | 7+ Rozwój | do zrobienia | | | |
 
@@ -197,6 +197,20 @@ Dopisuj tu decyzje usera (z datą i etapem) oraz problemy spoza zakresu bieżąc
 - **Dodatkowa zmiana na życzenie usera (spoza pierwotnej listy ID Etapu 4):** liczba losowanych pytań na podejście — dotąd ustawiana wyłącznie przy imporcie — jest teraz edytowalna też w `/admin/testy/<id>/ustawienia` (nowe pole, ograniczane do rozmiaru banku pytań z informacyjnym flashem, jeśli żądano więcej). `db.zapisz_ustawienia_testu` dostało nowy opcjonalny parametr `liczba_pytan_do_losowania` (`None` = bez zmian, zachowuje kompatybilność z dotychczasowymi wywołaniami). Zmiana wpływa tylko na nowe podejścia — trwające zachowują już wylosowany zestaw pytań. Pokryte dwoma testami w `tests/test_etap4_kontrola.py`.
 - **Testy po tych poprawkach:** 94/94 przechodzi.
 - **Ręczna weryfikacja usera (2026-09-23):** pełna lista z sekcji 0.3 (licznik + auto-zakończenie, kolor licznika w ostatniej minucie, powrót po terminie, okno dostępności `dostepny_od`/`dostepny_do`, widok mobilny, test bez limitu czasu działający jak dawniej, zmiana limitu na żywo w trakcie podejścia) przeszła pozytywnie — **user zaakceptował etap 4**.
+
+**Etap 5 (2026-09-23):**
+
+- **Odpowiedzi na pytania z sekcji 0.3:** eksport wyników z polem `przypisany` (imię/mail) — jeden plik `.xlsx`, arkusze „Zbiorczo” (osoba = wiersz: token, uczestnik, status, rozpoczęto, zakończono, czas trwania, poprawne, wszystkie, procent, zaliczenie) i „Szczegółowo” (odpowiedź = wiersz). Próg zaliczenia **domyślnie 80%**, edytowalny w „Ustawieniach testu”, puste pole = bez progu (analogicznie do limitu czasu). Uczestnik widzi zdał/nie zdał **tylko razem z wynikiem punktowym** (reguła `wynik_widoczny` z Etapu 4). Tokeny: „Kopiuj wszystkie” (`uczestnik<TAB>token`) + CSV (UTF-8 z BOM, średnik), link „Tokeny” w wierszu testu w panelu. Kopia bazy: tylko przycisk w panelu, bez automatycznej kopii przy starcie.
+- **E2 — migracja:** `testy.prog_zaliczenia INTEGER DEFAULT 80` (NULL-owalne). `ALTER TABLE ... DEFAULT 80` sprawia, że **testy istniejące przed migracją też dostają 80%** — zgodne z decyzją „domyślnie 80%”; admin może to zmienić/wyzerować per test. Zweryfikowane na kopii żywej `baza.db` (3 testy, 35 pytań, 17 tokenów, 14 podejść, 52 odpowiedzi — liczności bez zmian po migracji, migracja idempotentna). Kopia przed zmianą: `baza.db.bak-2026-09-23-etap5`.
+- **`zapisz_ustawienia_testu`** dostało parametr `prog_zaliczenia` ze znacznikiem `db.BEZ_ZMIAN` (a nie `None`, bo tu `None` znaczy „bez progu”). Przy okazji `UPDATE` jest budowany z listy kolumn zamiast dwóch prawie identycznych zapytań (nazwy kolumn wyłącznie ze stałej listy w kodzie).
+- **Poprawka spoza pierwotnej listy ID (wymagana przez E2):** `/sprawdz-wynik` liczył mianownik jako liczbę udzielonych odpowiedzi (`len(arkusz_wynikow)`), a nie wylosowanych pytań (L3) — przy „czas minął” pokazywał np. 1/1 = 100% zamiast 1/3. Od tego procentu zależy teraz zdał/nie zdał, więc naprawione (`podejscia.liczba_pytan`). Test: `test_sprawdz_wynik_liczy_zaliczenie_od_liczby_wylosowanych_pytan`.
+- **Znalezione po drodze (niepoprawione, poza zakresem):** `admin_token_szczegoly` ma ten sam problem z mianownikiem (`wszystkie=len(szczegoly)`) — admin widzi w szczegółach tokenu np. 1/1 zamiast 1/3 przy „czas minął” (tabela wyników testu i eksport są poprawne). Do naprawy przy okazji — jedna linia.
+- **E3 — statystyki:** procent poprawnych liczony od liczby **wylosowań** pytania w zakończonych podejściach (brak odpowiedzi = błędna, spójnie z L3), osobna kolumna „Brak odp.”. Sortowanie od najsłabiej rozwiązywanych, pytania nigdy niewylosowane na końcu. Poprawna litera wyróżniona w rozkładzie A–D.
+- **E1 — daty w XLSX** zapisywane jako prawdziwe daty Excela (format `DD.MM.YYYY HH:MM`), czas trwania jako `[h]:mm:ss`, procent jako `0.0%` — sortowanie/filtrowanie w Excelu działa bez przeróbek. Arkusz szczegółowy zawiera też pytania bez odpowiedzi („brak odpowiedzi”), których nie ma w widoku `arkusz_wynikow`. Widok `zbiorcze_wyniki` rozszerzony o `data_rozpoczecia` i `status`.
+- **UI9 — kopiowanie:** `navigator.clipboard` działa tylko na HTTPS/localhost, a aplikacja w sieci firmowej chodzi po HTTP, więc jest zapasowe `execCommand("copy")` z ukrytego (poza ekranem) pola tekstowego.
+- **S7 — kopia bazy:** `sqlite3.backup()` do bazy w pamięci + `serialize()` (Python 3.11+), bez plików tymczasowych; spójna także przy zapisach w trybie WAL. **Przywracanie** — opisane w README (zatrzymać aplikację, podmienić `baza.db`, usunąć `-wal`/`-shm`). Wgrywanie kopii przez panel celowo pominięte (nadpisanie żywej bazy z przeglądarki = za duże ryzyko).
+- **Testy:** 120/120 przechodzi (94 z wcześniejszych etapów bez zmian + 26 nowych w `tests/test_etap5_eksporty.py`).
+- **Ręczna weryfikacja usera (2026-09-23):** eksport XLSX w Excelu (znaki, daty, czas), kopiowanie tokenów i CSV, zmiana/wyzerowanie progu, zdał/nie zdał u uczestnika (także ukryte razem z wynikiem), statystyki pytań, pobranie kopii bazy — wszystko OK. **Przywracanie kopii z README nie było sprawdzane ręcznie.** User zaakceptował etap 5.
 
 
 ## Spis treści

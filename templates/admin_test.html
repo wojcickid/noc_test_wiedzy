@@ -18,12 +18,15 @@
     &middot; Losowanych na podejście: <strong>{{ test.liczba_pytan_do_losowania }}</strong>
     &middot; Zaimportowano: {{ test.data_importu }}
     {% if test.limit_czasu_min %}&middot; Limit czasu: <strong>{{ test.limit_czasu_min }} min</strong>{% endif %}
+    {% if test.prog_zaliczenia is not none %}&middot; Próg zaliczenia: <strong>{{ test.prog_zaliczenia }}%</strong>{% endif %}
 </p>
 <a class="btn" href="{{ url_for('admin_tokeny', test_id=test.id) }}">Zarządzaj tokenami</a>
 <a class="btn" href="{{ url_for('admin_ustawienia_testu', test_id=test.id) }}">Ustawienia testu</a>
+<a class="btn" href="{{ url_for('admin_statystyki', test_id=test.id) }}">Statystyki pytań</a>
 
 <h2>Wyniki uczestników</h2>
 {% if wyniki %}
+<a class="btn" href="{{ url_for('admin_eksport_wynikow', test_id=test.id) }}">Eksportuj wyniki do Excela (.xlsx)</a>
 <table class="szczegoly">
     <thead>
         <tr>
@@ -32,6 +35,7 @@
             <th>Poprawne</th>
             <th>Wszystkie</th>
             <th>%</th>
+            {% if test.prog_zaliczenia is not none %}<th>Zaliczenie</th>{% endif %}
             <th>Data</th>
         </tr>
     </thead>
@@ -43,6 +47,9 @@
             <td>{{ wynik.poprawne }}</td>
             <td>{{ wynik.wszystkie }}</td>
             <td>{{ wynik.procent }}%</td>
+            {% if test.prog_zaliczenia is not none %}
+            <td class="{{ 'zaliczony' if wynik.zaliczony else 'niezaliczony' }}">{{ 'zdał' if wynik.zaliczony else 'nie zdał' }}</td>
+            {% endif %}
             <td>{{ wynik.data_wyslania }}</td>
         </tr>
         {% endfor %}

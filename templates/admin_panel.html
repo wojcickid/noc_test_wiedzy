@@ -23,6 +23,7 @@
             <th>Losowanych</th>
             <th>Tokeny (wykorzystane/wszystkie)</th>
             <th>Zaimportowano</th>
+            <th></th>
         </tr>
     </thead>
     <tbody>
@@ -33,6 +34,7 @@
             <td>{{ test.liczba_pytan_do_losowania }}</td>
             <td>{{ test.liczba_wykorzystanych }} / {{ test.liczba_tokenow }}</td>
             <td>{{ test.data_importu }}</td>
+            <td><a href="{{ url_for('admin_tokeny', test_id=test.id) }}">Tokeny</a></td>
         </tr>
         {% endfor %}
     </tbody>
@@ -42,4 +44,5 @@
 {% endif %}
 
 <a class="btn" href="{{ url_for('admin_import') }}">Zaimportuj nowy test z pliku .xlsx</a>
+<a class="btn btn-drugorzedny" href="{{ url_for('admin_kopia_bazy') }}">Pobierz kopię bazy</a>
 {% endblock %}

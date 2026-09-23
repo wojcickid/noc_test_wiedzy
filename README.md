@@ -15,6 +15,10 @@ pojedynczo, a admin zarządza wszystkim przez wbudowany panel administracyjny.
 - Panel administracyjny (`/admin`, chroniony hasłem) do importu pytań, generowania
   tokenów (pojedynczo lub z listy uczestników z przypisanym imieniem/mailem) oraz
   podglądu wyników zbiorczych i szczegółowych.
+- Eksport wyników do Excela (arkusz zbiorczy i szczegółowy), eksport tokenów do CSV
+  i kopiowanie ich do schowka, statystyki pytań (% poprawnych, rozkład A–D).
+- Próg zaliczenia per test (domyślnie 80%, można zmienić albo wyłączyć) — informacja
+  zdał/nie zdał w wynikach admina i dla uczestnika.
 - Uczestnik może samodzielnie sprawdzić swój wynik po tokenie (`/sprawdz-wynik`).
 - Dane (testy, pytania, tokeny, odpowiedzi) w lokalnej bazie SQLite.
 
@@ -82,3 +86,16 @@ każda dostaje własny, przypisany token.
 Baza danych (`baza.db`), klucz sesji (`.flask_secret_key`), hasło administratora
 (`.admin_haslo`) oraz pliki `.xlsx` z pytaniami są w `.gitignore` i nigdy nie trafiają
 do repozytorium — każda instalacja generuje je lokalnie przy pierwszym starcie.
+
+### Kopia zapasowa bazy
+
+W panelu (`/admin`) przycisk **„Pobierz kopię bazy”** pobiera spójną kopię całej bazy
+jako plik `baza-RRRR-MM-DD-GGMM.db` — można to robić w trakcie działania aplikacji.
+
+Przywrócenie kopii:
+
+1. Zatrzymaj aplikację (zamknij okno `web_app*.bat` / proces serwera).
+2. Na wszelki wypadek zmień nazwę obecnego `baza.db` (np. na `baza.db.przed-przywroceniem`).
+3. Usuń pliki `baza.db-wal` i `baza.db-shm`, jeśli istnieją — należą do starej bazy.
+4. Skopiuj pobraną kopię do katalogu aplikacji i zmień jej nazwę na `baza.db`.
+5. Uruchom aplikację ponownie.
