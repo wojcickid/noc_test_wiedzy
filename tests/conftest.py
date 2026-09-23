@@ -56,3 +56,10 @@ def test_z_pytaniami(klient):
 
 def zaloguj_admina(klient, haslo_admina):
     return klient.post("/admin/login", data={"haslo": haslo_admina}, follow_redirects=True)
+
+
+def pobierz_csrf_token(klient):
+    """Token CSRF z bieżącej sesji klienta testowego — dostępny dopiero po wejściu na
+    stronę panelu, bo to render szablonu (wywołanie csrf_token()) go tworzy."""
+    with klient.session_transaction() as sess:
+        return sess["csrf_token"]

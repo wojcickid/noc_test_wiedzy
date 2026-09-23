@@ -18,6 +18,7 @@
 </p>
 
 <form action="{{ url_for('admin_import') }}" method="post" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label for="nazwa_testu">Nazwa testu:</label>
     <input type="text" id="nazwa_testu" name="nazwa_testu" required>
 
@@ -31,6 +32,7 @@
 </form>
 
 <form action="{{ url_for('admin_import_przyklad') }}" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <button type="submit">Wgraj przykładowy test (5 pytań)</button>
 </form>
 {% endblock %}

@@ -35,14 +35,17 @@ def main():
             raise SystemExit(f"Nie znaleziono testu '{args.nazwa_testu}'. Dostępne testy: {lista_testow}")
         test_id = wiersz["id"]
 
-    if args.lista:
-        with open(args.lista, "r", encoding="utf-8") as f:
-            przypisania = [linia.strip() for linia in f if linia.strip()]
-        if not przypisania:
-            raise SystemExit(f"Plik '{args.lista}' nie zawiera żadnych uczestników.")
-        nowe = wygeneruj_tokeny(test_id, len(przypisania), args.dlugosc, przypisania=przypisania)
-    else:
-        nowe = wygeneruj_tokeny(test_id, args.liczba, args.dlugosc)
+    try:
+        if args.lista:
+            with open(args.lista, "r", encoding="utf-8") as f:
+                przypisania = [linia.strip() for linia in f if linia.strip()]
+            if not przypisania:
+                raise SystemExit(f"Plik '{args.lista}' nie zawiera żadnych uczestników.")
+            nowe = wygeneruj_tokeny(test_id, len(przypisania), args.dlugosc, przypisania=przypisania)
+        else:
+            nowe = wygeneruj_tokeny(test_id, args.liczba, args.dlugosc)
+    except ValueError as e:
+        raise SystemExit(str(e))
 
     print(f"Wygenerowano {len(nowe)} nowych tokenów dla testu '{args.nazwa_testu}'.")
     print("Nowe tokeny:")

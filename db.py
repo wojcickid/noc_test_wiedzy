@@ -92,6 +92,7 @@ CREATE VIEW zbiorcze_wyniki AS
 SELECT
     ou.token AS token,
     tk.przypisany AS przypisany,
+    t.id AS test_id,
     t.nazwa AS test,
     COUNT(*) AS wszystkie,
     SUM(CASE WHEN ou.odpowiedz = p.odpowiedz THEN 1 ELSE 0 END) AS poprawne,
@@ -101,7 +102,7 @@ FROM odpowiedzi_uzytkownika ou
 JOIN pytania p ON p.id = ou.pytanie_id
 JOIN tokeny tk ON tk.token = ou.token
 JOIN testy t ON t.id = tk.test_id
-GROUP BY ou.token, t.nazwa;
+GROUP BY ou.token, t.id;
 """
 
 
@@ -164,14 +165,13 @@ def importuj_test_z_dataframe(nazwa_testu, df, liczba_pytan=20):
     liczba_pytan = max(1, min(int(liczba_pytan), len(df)))
 
     with baza() as conn:
-        istnieje = conn.execute("SELECT 1 FROM testy WHERE nazwa = ?", (nazwa_testu,)).fetchone()
-        if istnieje:
+        try:
+            cur = conn.execute(
+                "INSERT INTO testy (nazwa, data_importu, liczba_pytan_do_losowania) VALUES (?, ?, ?)",
+                (nazwa_testu, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), liczba_pytan),
+            )
+        except sqlite3.IntegrityError:
             raise BladImportu(f"Test o nazwie '{nazwa_testu}' już istnieje. Wybierz inną nazwę.")
-
-        cur = conn.execute(
-            "INSERT INTO testy (nazwa, data_importu, liczba_pytan_do_losowania) VALUES (?, ?, ?)",
-            (nazwa_testu, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), liczba_pytan),
-        )
         test_id = cur.lastrowid
 
         conn.executemany(
@@ -200,13 +200,27 @@ def wygeneruj_tokeny(test_id, liczba, dlugosc=8, przypisania=None):
     """Generuje `liczba` nowych, unikalnych tokenów dla wskazanego testu.
     Jeśli podano `przypisania` (lista imion/maili o długości `liczba`), i-ty
     token dostaje i-te przypisanie. Zwraca listę {"token", "przypisany"}."""
+    if dlugosc < 4 or dlugosc > 20:
+        raise ValueError("Długość tokenu musi być od 4 do 20 znaków.")
     if przypisania is not None and len(przypisania) != liczba:
         raise ValueError("Liczba przypisań musi odpowiadać liczbie tokenów.")
+
+    # Limit prób, żeby żądanie liczby tokenów przekraczającej pulę możliwych
+    # kodów (np. dlugosc=1 i liczba=40) kończyło się czytelnym błędem zamiast
+    # zawieszenia aplikacji w nieskończonej pętli (B11).
+    maks_prob = max(1000, liczba * 50)
 
     with baza() as conn:
         istniejace = {w["token"] for w in conn.execute("SELECT token FROM tokeny").fetchall()}
         nowe = []
+        proba = 0
         while len(nowe) < liczba:
+            if proba >= maks_prob:
+                raise ValueError(
+                    f"Nie udało się wygenerować {liczba} unikalnych tokenów o długości {dlugosc} — "
+                    "zbyt mała pula możliwych kodów dla tej długości. Zwiększ długość tokenu."
+                )
+            proba += 1
             token = losowy_kod(dlugosc)
             if token not in istniejace and token not in nowe:
                 nowe.append(token)

@@ -5,6 +5,7 @@
 <nav class="admin-nav">
     <a href="{{ url_for('admin_panel') }}">← Panel</a>
     <form action="{{ url_for('admin_logout') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="wyloguj">Wyloguj</button>
     </form>
 </nav>
@@ -17,7 +18,7 @@
     &middot; Losowanych na podejście: <strong>{{ test.liczba_pytan_do_losowania }}</strong>
     &middot; Zaimportowano: {{ test.data_importu }}
 </p>
-<a href="{{ url_for('admin_tokeny', test_id=test.id) }}">Zarządzaj tokenami</a>
+<a class="btn" href="{{ url_for('admin_tokeny', test_id=test.id) }}">Zarządzaj tokenami</a>
 
 <h2>Wyniki uczestników</h2>
 {% if wyniki %}

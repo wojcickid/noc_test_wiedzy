@@ -32,7 +32,8 @@ pojedynczo, a admin zarządza wszystkim przez wbudowany panel administracyjny.
    `http://localhost:5555`.
 2. Wejdź na `http://localhost:5555/admin`. Hasło administratora generuje się
    automatycznie przy pierwszym starcie — zobaczysz je w konsoli i w pliku
-   `.admin_haslo` (nieśledzonym w git).
+   `.admin_haslo` (nieśledzonym w git). Żeby zmienić hasło, edytuj ten plik
+   i zrestartuj aplikację — hasło jest wczytywane tylko raz, przy starcie.
 3. W panelu zaimportuj pytania (plik `.xlsx` albo przycisk „Wgraj przykładowy test”)
    i wygeneruj tokeny dla testu.
 4. Rozdaj tokeny uczestnikom — wchodzą na stronę główną i wpisują swój kod.
@@ -48,7 +49,7 @@ zamiast wbudowanego dev-servera.
 
 Wymagane kolumny: `tresc_pytania`, `opcja_a`, `opcja_b`, `opcja_c`, `opcja_d`,
 `odpowiedz` (litera `A`/`B`/`C`/`D`). Szablon do pobrania w panelu administracyjnym
-(`/admin/import`) albo generowany przez `importuj_pytania.py --help`.
+pod adresem `/admin/szablon-pytan.xlsx` (link na stronie `/admin/import`).
 
 ## Skrypty CLI
 

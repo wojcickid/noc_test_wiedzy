@@ -5,6 +5,7 @@
 <nav class="admin-nav">
     <a href="{{ url_for('admin_test', test_id=test.id) }}">← {{ test.nazwa }}</a>
     <form action="{{ url_for('admin_logout') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="wyloguj">Wyloguj</button>
     </form>
 </nav>
@@ -28,6 +29,7 @@
 {% endif %}
 
 <form action="{{ url_for('admin_tokeny', test_id=test.id) }}" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label for="lista_uczestnikow">Lista uczestników (opcjonalnie — jedna osoba na linię, imię i/lub e-mail). Jeśli wypełnisz, powstanie po jednym przypisanym tokenie na linię:</label>
     <textarea id="lista_uczestnikow" name="lista_uczestnikow" rows="5" placeholder="Jan Kowalski&#10;jan.kowalski@firma.pl&#10;Anna Nowak"></textarea>
 
@@ -64,6 +66,7 @@
             </td>
             <td>
                 <form class="przypisz" action="{{ url_for('admin_przypisz_token', token=token.token) }}" method="post">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="test_id" value="{{ test.id }}">
                     <input type="text" name="przypisany" value="{{ token.przypisany or '' }}" placeholder="imię / e-mail">
                     <button type="submit">Zapisz</button>

@@ -3,7 +3,7 @@
 import io
 
 import db
-from conftest import zaloguj_admina
+from conftest import pobierz_csrf_token, zaloguj_admina
 
 
 def test_logowanie_zlym_haslem_pokazuje_blad(klient):
@@ -23,7 +23,7 @@ def test_dostep_do_panelu_bez_logowania_przekierowuje_na_login(klient):
 
 def test_wylogowanie_odbiera_dostep(klient, haslo_admina):
     zaloguj_admina(klient, haslo_admina)
-    klient.post("/admin/logout")
+    klient.post("/admin/logout", data={"csrf_token": pobierz_csrf_token(klient)})
     odpowiedz = klient.get("/admin", follow_redirects=True)
     assert "Hasło administratora:".encode("utf-8") in odpowiedz.data
 
@@ -34,7 +34,12 @@ def _wyslij_import(klient, nazwa_testu, df, liczba_pytan=20):
     bufor.seek(0)
     return klient.post(
         "/admin/import",
-        data={"nazwa_testu": nazwa_testu, "plik": (bufor, "pytania.xlsx"), "liczba_pytan": str(liczba_pytan)},
+        data={
+            "nazwa_testu": nazwa_testu,
+            "plik": (bufor, "pytania.xlsx"),
+            "liczba_pytan": str(liczba_pytan),
+            "csrf_token": pobierz_csrf_token(klient),
+        },
         content_type="multipart/form-data",
         follow_redirects=True,
     )
@@ -78,10 +83,11 @@ def test_import_przycina_liczbe_pytan_do_dostepnej_w_pliku(klient, haslo_admina)
 
 def test_przyklad_dziala_i_nadaje_unikalne_nazwy_przy_powtorzeniach(klient, haslo_admina):
     zaloguj_admina(klient, haslo_admina)
-    pierwszy = klient.post("/admin/import/przyklad", follow_redirects=True)
+    csrf = pobierz_csrf_token(klient)
+    pierwszy = klient.post("/admin/import/przyklad", data={"csrf_token": csrf}, follow_redirects=True)
     assert "Przykładowy test".encode("utf-8") in pierwszy.data
 
-    drugi = klient.post("/admin/import/przyklad", follow_redirects=True)
+    drugi = klient.post("/admin/import/przyklad", data={"csrf_token": csrf}, follow_redirects=True)
     assert "Przykładowy test 2".encode("utf-8") in drugi.data
 
 
@@ -100,7 +106,7 @@ def test_generowanie_tokenow_anonimowych(klient, haslo_admina, test_z_pytaniami)
     zaloguj_admina(klient, haslo_admina)
     odpowiedz = klient.post(
         f"/admin/testy/{test_z_pytaniami}/tokeny",
-        data={"liczba": "5", "dlugosc": "6"},
+        data={"liczba": "5", "dlugosc": "6", "csrf_token": pobierz_csrf_token(klient)},
         follow_redirects=True,
     )
     assert b"Wygenerowano 5 nowych token" in odpowiedz.data
@@ -110,7 +116,7 @@ def test_generowanie_tokenow_z_lista_uczestnikow_przypisuje_osoby(klient, haslo_
     zaloguj_admina(klient, haslo_admina)
     odpowiedz = klient.post(
         f"/admin/testy/{test_z_pytaniami}/tokeny",
-        data={"lista_uczestnikow": "Jan Kowalski\nAnna Nowak", "dlugosc": "6"},
+        data={"lista_uczestnikow": "Jan Kowalski\nAnna Nowak", "dlugosc": "6", "csrf_token": pobierz_csrf_token(klient)},
         follow_redirects=True,
     )
     assert "Jan Kowalski".encode("utf-8") in odpowiedz.data
@@ -123,7 +129,7 @@ def test_przypisanie_tokenu_mozna_zmienic(klient, haslo_admina, test_z_pytaniami
 
     odpowiedz = klient.post(
         f"/admin/tokeny/{token}/przypisz",
-        data={"przypisany": "Nowa Osoba", "test_id": str(test_z_pytaniami)},
+        data={"przypisany": "Nowa Osoba", "test_id": str(test_z_pytaniami), "csrf_token": pobierz_csrf_token(klient)},
         follow_redirects=True,
     )
     assert "Zapisano przypisanie".encode("utf-8") in odpowiedz.data

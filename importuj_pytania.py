@@ -27,7 +27,10 @@ def main():
     args = parser.parse_args()
 
     inicjalizuj()
-    df = pd.read_excel(args.plik_xlsx)
+    try:
+        df = pd.read_excel(args.plik_xlsx)
+    except Exception as e:
+        raise SystemExit(f"Nie udało się odczytać pliku '{args.plik_xlsx}': {e}")
 
     try:
         test_id, liczba, liczba_pytan = importuj_test_z_dataframe(args.nazwa_testu, df, args.liczba_pytan)

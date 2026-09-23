@@ -6,7 +6,7 @@ from datetime import datetime
 from functools import wraps
 
 import pandas as pd
-from flask import Flask, flash, redirect, render_template, request, send_file, session, url_for
+from flask import Flask, abort, flash, redirect, render_template, request, send_file, session, url_for
 
 from db import (
     BladImportu,
@@ -89,6 +89,35 @@ def wymaga_admina(f):
     return opakowana
 
 
+def bezpieczna_sciezka_powrotu(sciezka):
+    """Akceptuje wyłącznie względne ścieżki wewnątrz aplikacji (zaczynające się
+    od pojedynczego '/'), żeby ?nastepny=https://obca-strona nie wyprowadzał
+    zalogowanego admina poza appkę (B2 — open redirect)."""
+    if sciezka and sciezka.startswith("/") and not sciezka.startswith("//"):
+        return sciezka
+    return None
+
+
+def generuj_csrf_token():
+    """Token CSRF trzymany w sesji admina — jedno pole ukryte w każdym formularzu
+    POST panelu, sprawdzane przez @csrf_chroniony (B3/S3)."""
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_urlsafe(32)
+    return session["csrf_token"]
+
+
+def csrf_chroniony(f):
+    @wraps(f)
+    def opakowana(*args, **kwargs):
+        if request.method == "POST":
+            token = request.form.get("csrf_token", "")
+            if not token or not secrets.compare_digest(token, session.get("csrf_token", "")):
+                abort(400, description="Nieprawidłowy lub wygasły token CSRF — odśwież stronę i spróbuj ponownie.")
+        return f(*args, **kwargs)
+
+    return opakowana
+
+
 def get_server_session():
     """Zwraca (sid, dane) danych sesji trzymanych po stronie serwera. Ciasteczko
     przeglądarki przechowuje wyłącznie losowy identyfikator, nigdy treść pytań
@@ -140,17 +169,20 @@ def waliduj_i_zuzyj_token(token):
     return wiersz["test_id"]
 
 
+app.jinja_env.globals["csrf_token"] = generuj_csrf_token
+
+
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
         token = (request.form.get("token") or "").strip().upper()
         if not token:
-            flash("Podaj token dostępu.")
+            flash("Podaj token dostępu.", "blad")
             return redirect(url_for("index"))
 
         test_id = waliduj_i_zuzyj_token(token)
         if test_id is None:
-            flash("Nieprawidłowy lub już wykorzystany token dostępu.")
+            flash("Nieprawidłowy lub już wykorzystany token dostępu.", "blad")
             return redirect(url_for("index"))
 
         sid, dane = get_server_session()
@@ -189,6 +221,13 @@ def test():
         dane["indeks_pytania"] = 0
         save_server_session(sid, dane)
 
+    if not wybrane_pytania_id:
+        # Test bez pytań (B12) — bez tego GET /test i GET /wynik przekierowują
+        # do siebie nawzajem w nieskończoność.
+        clear_server_session(sid)
+        flash("Ten test nie ma jeszcze żadnych pytań. Skontaktuj się z organizatorem.", "blad")
+        return redirect(url_for("index"))
+
     udzielone_odpowiedzi = dane.get("udzielone_odpowiedzi", {})
     indeks = dane.get("indeks_pytania", 0)
 
@@ -197,8 +236,14 @@ def test():
         odpowiedz = request.form.get("odpowiedz")
         oczekiwane_id = wybrane_pytania_id[indeks] if indeks < len(wybrane_pytania_id) else None
 
-        if not odpowiedz or pytanie_id is None or int(pytanie_id) != oczekiwane_id:
-            flash("Zaznacz odpowiedź, aby przejść dalej.")
+        if pytanie_id is None or not pytanie_id.isdigit() or int(pytanie_id) != oczekiwane_id:
+            # Niezgodność pytanie_id (np. cofnięcie w przeglądarce po udzieleniu
+            # odpowiedzi) to nie to samo co brak zaznaczenia — osobny komunikat (B14).
+            flash("To pytanie zostało już zapisane — pokazujemy aktualne pytanie.", "info")
+            return redirect(url_for("test"))
+
+        if not odpowiedz or odpowiedz not in {"A", "B", "C", "D"}:
+            flash("Zaznacz odpowiedź, aby przejść dalej.", "blad")
             return redirect(url_for("test"))
 
         udzielone_odpowiedzi[pytanie_id] = odpowiedz
@@ -278,7 +323,7 @@ def sprawdz_wynik():
     if request.method == "POST":
         token = (request.form.get("token") or "").strip().upper()
         if not token:
-            flash("Podaj token.")
+            flash("Podaj token.", "blad")
             return redirect(url_for("sprawdz_wynik"))
 
         with baza() as conn:
@@ -288,7 +333,7 @@ def sprawdz_wynik():
             ).fetchall()
 
         if not wiersze:
-            flash("Nie znaleziono wyników dla podanego tokenu — test mógł nie zostać jeszcze ukończony.")
+            flash("Nie znaleziono wyników dla podanego tokenu — test mógł nie zostać jeszcze ukończony.", "info")
             return redirect(url_for("sprawdz_wynik"))
 
         szczegoly = [dict(w) for w in wiersze]
@@ -309,14 +354,15 @@ def admin_login():
         haslo = request.form.get("haslo") or ""
         if secrets.compare_digest(haslo, ADMIN_HASLO):
             session["admin"] = True
-            nastepny = request.args.get("nastepny") or url_for("admin_panel")
+            nastepny = bezpieczna_sciezka_powrotu(request.args.get("nastepny")) or url_for("admin_panel")
             return redirect(nastepny)
-        flash("Nieprawidłowe hasło.")
+        flash("Nieprawidłowe hasło.", "blad")
         return redirect(url_for("admin_login"))
     return render_template("admin_login.html")
 
 
 @app.route("/admin/logout", methods=["POST"])
+@csrf_chroniony
 def admin_logout():
     session.pop("admin", None)
     return redirect(url_for("admin_login"))
@@ -342,6 +388,7 @@ def admin_panel():
 
 @app.route("/admin/import", methods=["GET", "POST"])
 @wymaga_admina
+@csrf_chroniony
 def admin_import():
     if request.method == "POST":
         plik = request.files.get("plik")
@@ -352,39 +399,41 @@ def admin_import():
             liczba_pytan = 20
 
         if not plik or plik.filename == "":
-            flash("Wybierz plik .xlsx z pytaniami.")
+            flash("Wybierz plik .xlsx z pytaniami.", "blad")
             return redirect(url_for("admin_import"))
         if not nazwa_testu:
-            flash("Podaj nazwę testu.")
+            flash("Podaj nazwę testu.", "blad")
             return redirect(url_for("admin_import"))
         if liczba_pytan < 1:
-            flash("Liczba losowanych pytań musi być dodatnia.")
+            flash("Liczba losowanych pytań musi być dodatnia.", "blad")
             return redirect(url_for("admin_import"))
 
         try:
             df = pd.read_excel(plik)
         except Exception:
-            flash("Nie udało się odczytać pliku — sprawdź, czy to poprawny plik .xlsx.")
+            flash("Nie udało się odczytać pliku — sprawdź, czy to poprawny plik .xlsx.", "blad")
             return redirect(url_for("admin_import"))
 
         try:
             test_id, liczba, liczba_pytan_ustawiona = importuj_test_z_dataframe(nazwa_testu, df, liczba_pytan)
         except BladImportu as e:
-            flash(str(e))
+            flash(str(e), "blad")
             return redirect(url_for("admin_import"))
 
         if liczba_pytan_ustawiona < liczba_pytan:
             flash(
                 f"Uwaga: plik ma tylko {liczba} pytań, więc losowanie ustawiono na "
-                f"{liczba_pytan_ustawiona} (zamiast żądanych {liczba_pytan})."
+                f"{liczba_pytan_ustawiona} (zamiast żądanych {liczba_pytan}).",
+                "info",
             )
-        flash(f"Zaimportowano {liczba} pytań jako test '{nazwa_testu}' (losowanie: {liczba_pytan_ustawiona} na podejście).")
+        flash(f"Zaimportowano {liczba} pytań jako test '{nazwa_testu}' (losowanie: {liczba_pytan_ustawiona} na podejście).", "ok")
         return redirect(url_for("admin_test", test_id=test_id))
     return render_template("admin_import.html")
 
 
 @app.route("/admin/import/przyklad", methods=["POST"])
 @wymaga_admina
+@csrf_chroniony
 def admin_import_przyklad():
     with baza() as conn:
         nazwa_testu = "Przykładowy test"
@@ -394,7 +443,7 @@ def admin_import_przyklad():
             nazwa_testu = f"Przykładowy test {licznik}"
 
     test_id, liczba, liczba_pytan = importuj_test_z_dataframe(nazwa_testu, PRZYKLADOWE_PYTANIA.copy())
-    flash(f"Wgrano przykładowy test '{nazwa_testu}' ({liczba} pytań).")
+    flash(f"Wgrano przykładowy test '{nazwa_testu}' ({liczba} pytań).", "ok")
     return redirect(url_for("admin_test", test_id=test_id))
 
 
@@ -426,13 +475,13 @@ def admin_test(test_id):
     with baza() as conn:
         test = conn.execute("SELECT * FROM testy WHERE id = ?", (test_id,)).fetchone()
         if test is None:
-            flash("Nie znaleziono testu.")
+            flash("Nie znaleziono testu.", "blad")
             return redirect(url_for("admin_panel"))
         liczba_pytan = conn.execute(
             "SELECT COUNT(*) AS c FROM pytania WHERE test_id = ?", (test_id,)
         ).fetchone()["c"]
         wyniki = conn.execute(
-            "SELECT * FROM zbiorcze_wyniki WHERE test = ? ORDER BY data_wyslania DESC", (test["nazwa"],)
+            "SELECT * FROM zbiorcze_wyniki WHERE test_id = ? ORDER BY data_wyslania DESC", (test_id,)
         ).fetchall()
     return render_template(
         "admin_test.html",
@@ -444,14 +493,14 @@ def admin_test(test_id):
 
 @app.route("/admin/testy/<int:test_id>/tokeny", methods=["GET", "POST"])
 @wymaga_admina
+@csrf_chroniony
 def admin_tokeny(test_id):
     with baza() as conn:
         test = conn.execute("SELECT * FROM testy WHERE id = ?", (test_id,)).fetchone()
     if test is None:
-        flash("Nie znaleziono testu.")
+        flash("Nie znaleziono testu.", "blad")
         return redirect(url_for("admin_panel"))
 
-    nowe_tokeny = None
     if request.method == "POST":
         try:
             dlugosc = int(request.form.get("dlugosc", "8"))
@@ -460,24 +509,40 @@ def admin_tokeny(test_id):
         lista_tekst = (request.form.get("lista_uczestnikow") or "").strip()
 
         if dlugosc < 4 or dlugosc > 20:
-            flash("Długość tokenu powinna być od 4 do 20 znaków.")
+            flash("Długość tokenu powinna być od 4 do 20 znaków.", "blad")
         elif lista_tekst:
             przypisania = [linia.strip() for linia in lista_tekst.splitlines() if linia.strip()]
             if len(przypisania) > 500:
-                flash("Lista może zawierać maksymalnie 500 osób naraz.")
+                flash("Lista może zawierać maksymalnie 500 osób naraz.", "blad")
             else:
-                nowe_tokeny = wygeneruj_tokeny(test_id, len(przypisania), dlugosc, przypisania=przypisania)
-                flash(f"Wygenerowano {len(nowe_tokeny)} nowych, przypisanych tokenów.")
+                try:
+                    nowe_tokeny = wygeneruj_tokeny(test_id, len(przypisania), dlugosc, przypisania=przypisania)
+                except ValueError as e:
+                    flash(str(e), "blad")
+                else:
+                    # Zapisane w sesji i odczytane raz po przekierowaniu (Post/Redirect/Get,
+                    # B10) — bez tego F5 po wygenerowaniu tokenów tworzyłoby je ponownie.
+                    session["nowe_tokeny"] = nowe_tokeny
+                    flash(f"Wygenerowano {len(nowe_tokeny)} nowych, przypisanych tokenów.", "ok")
         else:
             try:
                 liczba = int(request.form.get("liczba", "0"))
             except ValueError:
                 liczba = 0
             if liczba < 1 or liczba > 500:
-                flash("Podaj liczbę tokenów od 1 do 500 albo wklej listę uczestników.")
+                flash("Podaj liczbę tokenów od 1 do 500 albo wklej listę uczestników.", "blad")
             else:
-                nowe_tokeny = wygeneruj_tokeny(test_id, liczba, dlugosc)
-                flash(f"Wygenerowano {len(nowe_tokeny)} nowych tokenów.")
+                try:
+                    nowe_tokeny = wygeneruj_tokeny(test_id, liczba, dlugosc)
+                except ValueError as e:
+                    flash(str(e), "blad")
+                else:
+                    session["nowe_tokeny"] = nowe_tokeny
+                    flash(f"Wygenerowano {len(nowe_tokeny)} nowych tokenów.", "ok")
+
+        return redirect(url_for("admin_tokeny", test_id=test_id))
+
+    nowe_tokeny = session.pop("nowe_tokeny", None)
 
     with baza() as conn:
         tokeny = conn.execute(
@@ -498,15 +563,18 @@ def admin_tokeny(test_id):
 
 @app.route("/admin/tokeny/<token>/przypisz", methods=["POST"])
 @wymaga_admina
+@csrf_chroniony
 def admin_przypisz_token(token):
     przypisany = (request.form.get("przypisany") or "").strip()
     test_id = request.form.get("test_id")
     if przypisz_token(token, przypisany):
-        flash(f"Zapisano przypisanie dla tokenu {token}.")
+        flash(f"Zapisano przypisanie dla tokenu {token}.", "ok")
     else:
-        flash("Nie znaleziono tokenu.")
-    if test_id:
-        return redirect(url_for("admin_tokeny", test_id=test_id))
+        flash("Nie znaleziono tokenu.", "blad")
+    # test_id musi być liczbą, inaczej url_for rzuciłby błąd budowania adresu
+    # dla nieliczbowego wejścia w polu ukrytym formularza (B15).
+    if test_id and test_id.isdigit():
+        return redirect(url_for("admin_tokeny", test_id=int(test_id)))
     return redirect(url_for("admin_panel"))
 
 
@@ -514,10 +582,14 @@ def admin_przypisz_token(token):
 @wymaga_admina
 def admin_token_szczegoly(token):
     with baza() as conn:
-        token_wiersz = conn.execute("SELECT przypisany FROM tokeny WHERE token = ?", (token,)).fetchone()
+        token_wiersz = conn.execute("SELECT przypisany, test_id FROM tokeny WHERE token = ?", (token,)).fetchone()
         wiersze = conn.execute("SELECT * FROM arkusz_wynikow WHERE token = ?", (token,)).fetchall()
     if not wiersze:
-        flash("Brak wyników dla tego tokenu — test mógł nie zostać jeszcze ukończony.")
+        flash("Brak wyników dla tego tokenu — test mógł nie zostać jeszcze ukończony.", "info")
+        # Wracamy do listy tokenów właściwego testu zamiast do panelu głównego,
+        # bo stąd zwykle wchodzi się z listy tokenów konkretnego testu (B20).
+        if token_wiersz:
+            return redirect(url_for("admin_tokeny", test_id=token_wiersz["test_id"]))
         return redirect(url_for("admin_panel"))
     szczegoly = [dict(w) for w in wiersze]
     poprawne = sum(1 for w in szczegoly if w["odpowiedz_uzytkownika"] == w["poprawna_odpowiedz"])
@@ -533,4 +605,7 @@ def admin_token_szczegoly(token):
 
 if __name__ == "__main__":
     debug_mode = os.environ.get("FLASK_DEBUG", "0") == "1"
-    app.run(host="0.0.0.0", port=5555, debug=debug_mode, threaded=True)
+    # W trybie debug debugger Werkzeuga pozwala na zdalne wykonanie kodu, więc
+    # nasłuchujemy tylko lokalnie — w trybie zwykłym zostaje 0.0.0.0 (B4).
+    host = "127.0.0.1" if debug_mode else "0.0.0.0"
+    app.run(host=host, port=5555, debug=debug_mode, threaded=True)

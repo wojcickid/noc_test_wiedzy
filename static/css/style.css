@@ -49,11 +49,19 @@ textarea {
     color: #666;
     font-weight: bold;
 }
-.bledy {
+.komunikaty {
     list-style: none;
     padding: 0;
-    color: #c0392b;
     font-weight: bold;
+}
+.komunikat-blad {
+    color: #c0392b;
+}
+.komunikat-ok {
+    color: #1e7e34;
+}
+.komunikat-info {
+    color: #555;
 }
 button {
     background-color: #007BFF;
@@ -69,6 +77,12 @@ button:hover {
     background-color: #0056b3;
 }
 a {
+    color: #007BFF;
+}
+a:hover {
+    color: #0056b3;
+}
+.btn {
     display: inline-block;
     background-color: #007BFF;
     color: white;
@@ -77,8 +91,9 @@ a {
     text-decoration: none;
     margin-top: 20px;
 }
-a:hover {
+.btn:hover {
     background-color: #0056b3;
+    color: white;
 }
 footer {
     margin-top: 40px;
@@ -114,9 +129,6 @@ table.szczegoly tr.zle { background-color: #fdecea; }
     border: none;
     padding: 0;
     margin: 0;
-}
-.admin-nav a {
-    margin-top: 0;
 }
 button.wyloguj {
     background-color: #6c757d;

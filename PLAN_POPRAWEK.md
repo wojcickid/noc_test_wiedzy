@@ -129,7 +129,7 @@ Aktualizuj tę tabelę na końcu każdej sesji.
 | Etap | Status | Gałąź / commit | Data | Uwagi |
 |------|--------|----------------|------|-------|
 | 0 Przygotowanie | zrobione (czeka na akceptację) | `etap-0-testy-i-baza-html` | 2026-09-23 | S4, S5, UI2 — patrz sekcja 0.5 |
-| 1 Szybkie poprawki | do zrobienia | | | |
+| 1 Szybkie poprawki | zrobione (czeka na akceptację) | `etap-1-szybkie-poprawki` | 2026-09-23 | B2, B3/S3, B4, B7, B10, B11, B12, B14, B15, B16, B17, B18, B19, B20, UI1, UI3, UI4 — patrz sekcja 0.5 |
 | 2 Przebieg testu w bazie | do zrobienia | | | |
 | 3 Import | do zrobienia | | | |
 | 4 Kontrola nad testem | do zrobienia | | | |
@@ -149,6 +149,14 @@ Dopisuj tu decyzje usera (z datą i etapem) oraz problemy spoza zakresu bieżąc
 - **Odstępstwo od zasady 0.1.6:** podczas pisania i uruchamiania testów `baza.db` była kilkukrotnie kasowana/tworzona od nowa (żeby zresetować stan między ręcznymi sprawdzeniami) — zasada mówi „nigdy nie usuwaj baza.db". Zrobione świadomie, bo user jawnie określił tę bazę jako nieważne dane testowe i kopia zapasowa istniała przez cały czas (do momentu, aż user sam polecił ją skasować, patrz wyżej). **Przy kolejnych etapach, gdy w bazie będą realne dane uczestników, tej zasady należy pilnować bez wyjątków.**
 - **Znane ograniczenie (poza zakresem Etapu 0):** `test_wiedzy_app.py` przy imporcie modułu (czyli też przy starcie `pytest`) czyta/tworzy prawdziwe pliki projektu `.flask_secret_key` i `.admin_haslo` (nie są w pełni izolowane dla testów, w przeciwieństwie do `db.DB_PLIK` i `SESSION_DIR`, które fixture `klient` poprawnie podmienia). Nie jest to błąd — pliki są gitignored i nieszkodliwe do nadpisania — ale docelowo naturalnie rozwiąże to S6 (konfiguracja w jednym miejscu, wstrzykiwana zamiast czytana z globalnych stałych przy imporcie modułu).
 - **UI2 — weryfikacja identyczności wyglądu:** zamiast (albo obok) ręcznego sprawdzenia w przeglądarce, napisano skrypt porównujący wyrenderowany HTML wszystkich stron (stare szablony z `main` vs. nowe po `base.html`) przy deterministycznych danych — zero różnic poza białymi znakami. Wynik: **brak jakichkolwiek różnic wizualnych/strukturalnych.**
+
+**Etap 1 (2026-09-23):**
+
+- **CSRF:** user zaakceptował rekomendację — własny token w sesji (`generuj_csrf_token()` jako global Jinja `csrf_token()`, dekorator `@csrf_chroniony` porównujący `secrets.compare_digest`), bez nowej zależności typu Flask-WTF. Zastosowany na wszystkich formularzach POST panelu admina (`admin_logout`, `admin_import`, `admin_import/przyklad`, `admin_tokeny`, `admin_przypisz_token`) — **poza `admin_login`**, celowo pominiętym (login CSRF nie był w zakresie pytania z sekcji 0.3, a token dla formularza logowania i tak wymagałby sesji przed uwierzytelnieniem).
+- **B4 — debug tylko na `127.0.0.1`:** user zaakceptował rekomendację. `host` zależy teraz od `FLASK_DEBUG=1` (`127.0.0.1` w debug, `0.0.0.0` bez debug — bez zmiany domyślnego zachowania produkcyjnego).
+- **B10 — Post/Redirect/Get przy generowaniu tokenów:** zaimplementowane przez `session["nowe_tokeny"]` ustawiane na POST i `session.pop(...)` na GET — nowo wygenerowane tokeny pokazują się dokładnie raz, F5 po przekierowaniu ich nie duplikuje. Pokryte testem (`test_odswiezenie_po_generowaniu_tokenow_nie_pokazuje_ich_ponownie`).
+- **B16 — wyniki po `test_id`, nie po nazwie:** wymagało zmiany widoku `zbiorcze_wyniki` w `db.py` (dodanie `t.id AS test_id`, `GROUP BY` po id zamiast po nazwie) — wykracza formalnie poza `test_wiedzy_app.py`, ale jest niezbędne do naprawienia B16 na poziomie trasy `admin_test`, więc zrobione w ramach tego samego etapu.
+- **Test bez pokrycia automatycznego:** B4 (ograniczenie hosta w trybie debug) zweryfikowane wyłącznie ręcznie (uruchomienie `python test_wiedzy_app.py`, sprawdzenie że domyślnie nasłuchuje na `0.0.0.0`) — nie da się tego sensownie sprawdzić w pytest bez faktycznego bindowania socketa.
 
 ---
 

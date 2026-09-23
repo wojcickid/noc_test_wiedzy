@@ -5,6 +5,7 @@
 <nav class="admin-nav">
     <a href="{{ url_for('admin_import') }}">+ Nowy test</a>
     <form action="{{ url_for('admin_logout') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="wyloguj">Wyloguj</button>
     </form>
 </nav>
@@ -40,5 +41,5 @@
 <p>Brak zaimportowanych testów. Zacznij od importu pytań.</p>
 {% endif %}
 
-<a href="{{ url_for('admin_import') }}">Zaimportuj nowy test z pliku .xlsx</a>
+<a class="btn" href="{{ url_for('admin_import') }}">Zaimportuj nowy test z pliku .xlsx</a>
 {% endblock %}
