@@ -1,34 +1,18 @@
-<!DOCTYPE html>
-<html lang="pl">
-<head>
-    <meta charset="UTF-8">
-    <title>Test</title>
-    <link rel="shortcut icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
-<body>
-    <h1>Test</h1>
-    <p class="postep">Pytanie {{ numer }} z {{ liczba_pytan }}</p>
-    {% with komunikaty = get_flashed_messages() %}
-        {% if komunikaty %}
-            <ul class="bledy">
-                {% for komunikat in komunikaty %}
-                <li>{{ komunikat }}</li>
-                {% endfor %}
-            </ul>
-        {% endif %}
-    {% endwith %}
-    <form action="{{ url_for('test') }}" method="post">
-        <input type="hidden" name="pytanie_id" value="{{ pytanie.id }}">
-        <div class="pytanie">
-            <p>{{ pytanie.tresc_pytania }}</p>
-            <label><input type="radio" name="odpowiedz" value="A" required> {{ pytanie.opcja_a }}</label>
-            <label><input type="radio" name="odpowiedz" value="B"> {{ pytanie.opcja_b }}</label>
-            <label><input type="radio" name="odpowiedz" value="C"> {{ pytanie.opcja_c }}</label>
-            <label><input type="radio" name="odpowiedz" value="D"> {{ pytanie.opcja_d }}</label>
-        </div>
-        <button type="submit">{% if numer == liczba_pytan %}Zakończ test{% else %}Dalej{% endif %}</button>
-    </form>
-    {% include "stopka.html" %}
-</body>
-</html>
+{% extends "base.html" %}
+{% block tytul %}Test{% endblock %}
+{% block naglowek %}Test{% endblock %}
+{% block tresc %}
+<p class="postep">Pytanie {{ numer }} z {{ liczba_pytan }}</p>
+{% include "_komunikaty.html" %}
+<form action="{{ url_for('test') }}" method="post">
+    <input type="hidden" name="pytanie_id" value="{{ pytanie.id }}">
+    <div class="pytanie">
+        <p>{{ pytanie.tresc_pytania }}</p>
+        <label><input type="radio" name="odpowiedz" value="A" required> {{ pytanie.opcja_a }}</label>
+        <label><input type="radio" name="odpowiedz" value="B"> {{ pytanie.opcja_b }}</label>
+        <label><input type="radio" name="odpowiedz" value="C"> {{ pytanie.opcja_c }}</label>
+        <label><input type="radio" name="odpowiedz" value="D"> {{ pytanie.opcja_d }}</label>
+    </div>
+    <button type="submit">{% if numer == liczba_pytan %}Zakończ test{% else %}Dalej{% endif %}</button>
+</form>
+{% endblock %}

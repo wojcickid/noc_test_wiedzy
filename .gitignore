@@ -9,4 +9,6 @@ flask_session/
 baza.db
 baza.db-wal
 baza.db-shm
+baza.db.bak-*
 *.xlsx
+.pytest_cache/

@@ -1,64 +1,51 @@
-<!DOCTYPE html>
-<html lang="pl">
-<head>
-    <meta charset="UTF-8">
-    <title>{{ test.nazwa }} — panel administracyjny</title>
-    <link rel="shortcut icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
-<body class="admin">
-    <nav class="admin-nav">
-        <a href="{{ url_for('admin_panel') }}">← Panel</a>
-        <form action="{{ url_for('admin_logout') }}" method="post">
-            <button type="submit" class="wyloguj">Wyloguj</button>
-        </form>
-    </nav>
-    <h1>{{ test.nazwa }}</h1>
-    {% with komunikaty = get_flashed_messages() %}
-        {% if komunikaty %}
-            <ul class="bledy">
-                {% for komunikat in komunikaty %}
-                <li>{{ komunikat }}</li>
-                {% endfor %}
-            </ul>
-        {% endif %}
-    {% endwith %}
-    <p>
-        Pytań w banku: <strong>{{ liczba_pytan }}</strong>
-        &middot; Losowanych na podejście: <strong>{{ test.liczba_pytan_do_losowania }}</strong>
-        &middot; Zaimportowano: {{ test.data_importu }}
-    </p>
-    <a href="{{ url_for('admin_tokeny', test_id=test.id) }}">Zarządzaj tokenami</a>
+{% set klasa_body = "admin" %}
+{% extends "base.html" %}
+{% block tytul %}{{ test.nazwa }} — panel administracyjny{% endblock %}
+{% block nav %}
+<nav class="admin-nav">
+    <a href="{{ url_for('admin_panel') }}">← Panel</a>
+    <form action="{{ url_for('admin_logout') }}" method="post">
+        <button type="submit" class="wyloguj">Wyloguj</button>
+    </form>
+</nav>
+{% endblock %}
+{% block naglowek %}{{ test.nazwa }}{% endblock %}
+{% block tresc %}
+{% include "_komunikaty.html" %}
+<p>
+    Pytań w banku: <strong>{{ liczba_pytan }}</strong>
+    &middot; Losowanych na podejście: <strong>{{ test.liczba_pytan_do_losowania }}</strong>
+    &middot; Zaimportowano: {{ test.data_importu }}
+</p>
+<a href="{{ url_for('admin_tokeny', test_id=test.id) }}">Zarządzaj tokenami</a>
 
-    <h2>Wyniki uczestników</h2>
-    {% if wyniki %}
-    <table class="szczegoly">
-        <thead>
-            <tr>
-                <th>Uczestnik</th>
-                <th>Token</th>
-                <th>Poprawne</th>
-                <th>Wszystkie</th>
-                <th>%</th>
-                <th>Data</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for wynik in wyniki %}
-            <tr>
-                <td>{{ wynik.przypisany or '—' }}</td>
-                <td><a href="{{ url_for('admin_token_szczegoly', token=wynik.token) }}">{{ wynik.token }}</a></td>
-                <td>{{ wynik.poprawne }}</td>
-                <td>{{ wynik.wszystkie }}</td>
-                <td>{{ wynik.procent }}%</td>
-                <td>{{ wynik.data_wyslania }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p>Nikt jeszcze nie ukończył tego testu.</p>
-    {% endif %}
-    {% include "stopka.html" %}
-</body>
-</html>
+<h2>Wyniki uczestników</h2>
+{% if wyniki %}
+<table class="szczegoly">
+    <thead>
+        <tr>
+            <th>Uczestnik</th>
+            <th>Token</th>
+            <th>Poprawne</th>
+            <th>Wszystkie</th>
+            <th>%</th>
+            <th>Data</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for wynik in wyniki %}
+        <tr>
+            <td>{{ wynik.przypisany or '—' }}</td>
+            <td><a href="{{ url_for('admin_token_szczegoly', token=wynik.token) }}">{{ wynik.token }}</a></td>
+            <td>{{ wynik.poprawne }}</td>
+            <td>{{ wynik.wszystkie }}</td>
+            <td>{{ wynik.procent }}%</td>
+            <td>{{ wynik.data_wyslania }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>Nikt jeszcze nie ukończył tego testu.</p>
+{% endif %}
+{% endblock %}

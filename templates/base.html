@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block tytul %}{% endblock %}</title>
+    <link rel="shortcut icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body{% if klasa_body %} class="{{ klasa_body }}"{% endif %}>
+    {% block nav %}{% endblock %}
+    <h1>{% block naglowek %}{% endblock %}</h1>
+    {% block tresc %}{% endblock %}
+    {% include "stopka.html" %}
+</body>
+</html>

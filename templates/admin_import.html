@@ -1,49 +1,36 @@
-<!DOCTYPE html>
-<html lang="pl">
-<head>
-    <meta charset="UTF-8">
-    <title>Nowy test — import pytań</title>
-    <link rel="shortcut icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
-<body class="admin">
-    <nav class="admin-nav">
-        <a href="{{ url_for('admin_panel') }}">← Panel</a>
-        <form action="{{ url_for('admin_logout') }}" method="post">
-            <button type="submit" class="wyloguj">Wyloguj</button>
-        </form>
-    </nav>
-    <h1>Nowy test — import pytań</h1>
-    {% with komunikaty = get_flashed_messages() %}
-        {% if komunikaty %}
-            <ul class="bledy">
-                {% for komunikat in komunikaty %}
-                <li>{{ komunikat }}</li>
-                {% endfor %}
-            </ul>
-        {% endif %}
-    {% endwith %}
-
-    <p>
-        <a href="{{ url_for('admin_szablon') }}">Pobierz szablon .xlsx</a>
-    </p>
-
-    <form action="{{ url_for('admin_import') }}" method="post" enctype="multipart/form-data">
-        <label for="nazwa_testu">Nazwa testu:</label>
-        <input type="text" id="nazwa_testu" name="nazwa_testu" required>
-
-        <label for="plik">Plik .xlsx (kolumny: tresc_pytania, opcja_a, opcja_b, opcja_c, opcja_d, odpowiedz):</label>
-        <input type="file" id="plik" name="plik" accept=".xlsx" required>
-
-        <label for="liczba_pytan">Ile pytań losować przy każdym podejściu:</label>
-        <input type="number" id="liczba_pytan" name="liczba_pytan" min="1" value="20" required>
-
-        <button type="submit">Importuj</button>
+{% set klasa_body = "admin" %}
+{% extends "base.html" %}
+{% block tytul %}Nowy test — import pytań{% endblock %}
+{% block nav %}
+<nav class="admin-nav">
+    <a href="{{ url_for('admin_panel') }}">← Panel</a>
+    <form action="{{ url_for('admin_logout') }}" method="post">
+        <button type="submit" class="wyloguj">Wyloguj</button>
     </form>
+</nav>
+{% endblock %}
+{% block naglowek %}Nowy test — import pytań{% endblock %}
+{% block tresc %}
+{% include "_komunikaty.html" %}
 
-    <form action="{{ url_for('admin_import_przyklad') }}" method="post">
-        <button type="submit">Wgraj przykładowy test (5 pytań)</button>
-    </form>
-    {% include "stopka.html" %}
-</body>
-</html>
+<p>
+    <a href="{{ url_for('admin_szablon') }}">Pobierz szablon .xlsx</a>
+</p>
+
+<form action="{{ url_for('admin_import') }}" method="post" enctype="multipart/form-data">
+    <label for="nazwa_testu">Nazwa testu:</label>
+    <input type="text" id="nazwa_testu" name="nazwa_testu" required>
+
+    <label for="plik">Plik .xlsx (kolumny: tresc_pytania, opcja_a, opcja_b, opcja_c, opcja_d, odpowiedz):</label>
+    <input type="file" id="plik" name="plik" accept=".xlsx" required>
+
+    <label for="liczba_pytan">Ile pytań losować przy każdym podejściu:</label>
+    <input type="number" id="liczba_pytan" name="liczba_pytan" min="1" value="20" required>
+
+    <button type="submit">Importuj</button>
+</form>
+
+<form action="{{ url_for('admin_import_przyklad') }}" method="post">
+    <button type="submit">Wgraj przykładowy test (5 pytań)</button>
+</form>
+{% endblock %}

@@ -1,95 +1,82 @@
-<!DOCTYPE html>
-<html lang="pl">
-<head>
-    <meta charset="UTF-8">
-    <title>Tokeny — {{ test.nazwa }}</title>
-    <link rel="shortcut icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
-<body class="admin">
-    <nav class="admin-nav">
-        <a href="{{ url_for('admin_test', test_id=test.id) }}">← {{ test.nazwa }}</a>
-        <form action="{{ url_for('admin_logout') }}" method="post">
-            <button type="submit" class="wyloguj">Wyloguj</button>
-        </form>
-    </nav>
-    <h1>Tokeny — {{ test.nazwa }}</h1>
-    {% with komunikaty = get_flashed_messages() %}
-        {% if komunikaty %}
-            <ul class="bledy">
-                {% for komunikat in komunikaty %}
-                <li>{{ komunikat }}</li>
-                {% endfor %}
-            </ul>
-        {% endif %}
-    {% endwith %}
-
-    {% if nowe_tokeny %}
-    <div class="nowe-tokeny">
-        <p><strong>Nowo wygenerowane tokeny (skopiuj i rozdaj uczestnikom):</strong></p>
-        <table class="szczegoly">
-            <thead><tr><th>Uczestnik</th><th>Token</th></tr></thead>
-            <tbody>
-                {% for wpis in nowe_tokeny %}
-                <tr><td>{{ wpis.przypisany or '—' }}</td><td>{{ wpis.token }}</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% endif %}
-
-    <form action="{{ url_for('admin_tokeny', test_id=test.id) }}" method="post">
-        <label for="lista_uczestnikow">Lista uczestników (opcjonalnie — jedna osoba na linię, imię i/lub e-mail). Jeśli wypełnisz, powstanie po jednym przypisanym tokenie na linię:</label>
-        <textarea id="lista_uczestnikow" name="lista_uczestnikow" rows="5" placeholder="Jan Kowalski&#10;jan.kowalski@firma.pl&#10;Anna Nowak"></textarea>
-
-        <label for="liczba">...albo — jeśli lista pusta — wygeneruj tokeny anonimowe, ile:</label>
-        <input type="number" id="liczba" name="liczba" min="1" max="500" value="20">
-
-        <label for="dlugosc">Długość tokenu:</label>
-        <input type="number" id="dlugosc" name="dlugosc" min="4" max="20" value="8" required>
-
-        <button type="submit">Generuj tokeny</button>
+{% set klasa_body = "admin" %}
+{% extends "base.html" %}
+{% block tytul %}Tokeny — {{ test.nazwa }}{% endblock %}
+{% block nav %}
+<nav class="admin-nav">
+    <a href="{{ url_for('admin_test', test_id=test.id) }}">← {{ test.nazwa }}</a>
+    <form action="{{ url_for('admin_logout') }}" method="post">
+        <button type="submit" class="wyloguj">Wyloguj</button>
     </form>
+</nav>
+{% endblock %}
+{% block naglowek %}Tokeny — {{ test.nazwa }}{% endblock %}
+{% block tresc %}
+{% include "_komunikaty.html" %}
 
-    <h2>Wszystkie tokeny ({{ tokeny|length }})</h2>
-    {% if tokeny %}
+{% if nowe_tokeny %}
+<div class="nowe-tokeny">
+    <p><strong>Nowo wygenerowane tokeny (skopiuj i rozdaj uczestnikom):</strong></p>
     <table class="szczegoly">
-        <thead>
-            <tr>
-                <th>Token</th>
-                <th>Przypisany</th>
-                <th>Status</th>
-                <th>Utworzono</th>
-                <th>Wykorzystano</th>
-            </tr>
-        </thead>
+        <thead><tr><th>Uczestnik</th><th>Token</th></tr></thead>
         <tbody>
-            {% for token in tokeny %}
-            <tr class="{{ 'zle' if token.wykorzystany else 'ok' }}">
-                <td>
-                    {% if token.wykorzystany %}
-                    <a href="{{ url_for('admin_token_szczegoly', token=token.token) }}">{{ token.token }}</a>
-                    {% else %}
-                    {{ token.token }}
-                    {% endif %}
-                </td>
-                <td>
-                    <form class="przypisz" action="{{ url_for('admin_przypisz_token', token=token.token) }}" method="post">
-                        <input type="hidden" name="test_id" value="{{ test.id }}">
-                        <input type="text" name="przypisany" value="{{ token.przypisany or '' }}" placeholder="imię / e-mail">
-                        <button type="submit">Zapisz</button>
-                    </form>
-                </td>
-                <td>{{ 'wykorzystany' if token.wykorzystany else 'wolny' }}</td>
-                <td>{{ token.data_utworzenia }}</td>
-                <td>{{ token.data_wykorzystania or '—' }}</td>
-            </tr>
+            {% for wpis in nowe_tokeny %}
+            <tr><td>{{ wpis.przypisany or '—' }}</td><td>{{ wpis.token }}</td></tr>
             {% endfor %}
         </tbody>
     </table>
-    {% else %}
-    <p>Brak tokenów dla tego testu.</p>
-    {% endif %}
-    {% include "stopka.html" %}
-</body>
-</html>
+</div>
+{% endif %}
+
+<form action="{{ url_for('admin_tokeny', test_id=test.id) }}" method="post">
+    <label for="lista_uczestnikow">Lista uczestników (opcjonalnie — jedna osoba na linię, imię i/lub e-mail). Jeśli wypełnisz, powstanie po jednym przypisanym tokenie na linię:</label>
+    <textarea id="lista_uczestnikow" name="lista_uczestnikow" rows="5" placeholder="Jan Kowalski&#10;jan.kowalski@firma.pl&#10;Anna Nowak"></textarea>
+
+    <label for="liczba">...albo — jeśli lista pusta — wygeneruj tokeny anonimowe, ile:</label>
+    <input type="number" id="liczba" name="liczba" min="1" max="500" value="20">
+
+    <label for="dlugosc">Długość tokenu:</label>
+    <input type="number" id="dlugosc" name="dlugosc" min="4" max="20" value="8" required>
+
+    <button type="submit">Generuj tokeny</button>
+</form>
+
+<h2>Wszystkie tokeny ({{ tokeny|length }})</h2>
+{% if tokeny %}
+<table class="szczegoly">
+    <thead>
+        <tr>
+            <th>Token</th>
+            <th>Przypisany</th>
+            <th>Status</th>
+            <th>Utworzono</th>
+            <th>Wykorzystano</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for token in tokeny %}
+        <tr class="{{ 'zle' if token.wykorzystany else 'ok' }}">
+            <td>
+                {% if token.wykorzystany %}
+                <a href="{{ url_for('admin_token_szczegoly', token=token.token) }}">{{ token.token }}</a>
+                {% else %}
+                {{ token.token }}
+                {% endif %}
+            </td>
+            <td>
+                <form class="przypisz" action="{{ url_for('admin_przypisz_token', token=token.token) }}" method="post">
+                    <input type="hidden" name="test_id" value="{{ test.id }}">
+                    <input type="text" name="przypisany" value="{{ token.przypisany or '' }}" placeholder="imię / e-mail">
+                    <button type="submit">Zapisz</button>
+                </form>
+            </td>
+            <td>{{ 'wykorzystany' if token.wykorzystany else 'wolny' }}</td>
+            <td>{{ token.data_utworzenia }}</td>
+            <td>{{ token.data_wykorzystania or '—' }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>Brak tokenów dla tego testu.</p>
+{% endif %}
+{% endblock %}

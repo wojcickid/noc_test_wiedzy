@@ -1,38 +1,33 @@
-<!DOCTYPE html>
-<html lang="pl">
-<head>
-    <meta charset="UTF-8">
-    <title>Wynik {{ token }} — panel administracyjny</title>
-    <link rel="shortcut icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
-<body class="admin">
-    <nav class="admin-nav">
-        <a href="{{ url_for('admin_panel') }}">← Panel</a>
-        <form action="{{ url_for('admin_logout') }}" method="post">
-            <button type="submit" class="wyloguj">Wyloguj</button>
-        </form>
-    </nav>
-    <h1>Wynik: {{ token }}{% if przypisany %} — {{ przypisany }}{% endif %}</h1>
-    <p><strong>{{ poprawne }} / {{ wszystkie }}</strong></p>
-    <table class="szczegoly">
-        <thead>
-            <tr>
-                <th>Pytanie</th>
-                <th>Odpowiedź uczestnika</th>
-                <th>Poprawna odpowiedź</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for wiersz in szczegoly %}
-            <tr class="{{ 'ok' if wiersz.odpowiedz_uzytkownika == wiersz.poprawna_odpowiedz else 'zle' }}">
-                <td>{{ wiersz.tresc_pytania }}</td>
-                <td>{{ wiersz.odpowiedz_uzytkownika }}) {{ wiersz.tresc_odpowiedzi_uzytkownika }}</td>
-                <td>{{ wiersz.poprawna_odpowiedz }}) {{ wiersz.tresc_poprawnej_odpowiedzi }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% include "stopka.html" %}
-</body>
-</html>
+{% set klasa_body = "admin" %}
+{% extends "base.html" %}
+{% block tytul %}Wynik {{ token }} — panel administracyjny{% endblock %}
+{% block nav %}
+<nav class="admin-nav">
+    <a href="{{ url_for('admin_panel') }}">← Panel</a>
+    <form action="{{ url_for('admin_logout') }}" method="post">
+        <button type="submit" class="wyloguj">Wyloguj</button>
+    </form>
+</nav>
+{% endblock %}
+{% block naglowek %}Wynik: {{ token }}{% if przypisany %} — {{ przypisany }}{% endif %}{% endblock %}
+{% block tresc %}
+<p><strong>{{ poprawne }} / {{ wszystkie }}</strong></p>
+<table class="szczegoly">
+    <thead>
+        <tr>
+            <th>Pytanie</th>
+            <th>Odpowiedź uczestnika</th>
+            <th>Poprawna odpowiedź</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for wiersz in szczegoly %}
+        <tr class="{{ 'ok' if wiersz.odpowiedz_uzytkownika == wiersz.poprawna_odpowiedz else 'zle' }}">
+            <td>{{ wiersz.tresc_pytania }}</td>
+            <td>{{ wiersz.odpowiedz_uzytkownika }}) {{ wiersz.tresc_odpowiedzi_uzytkownika }}</td>
+            <td>{{ wiersz.poprawna_odpowiedz }}) {{ wiersz.tresc_poprawnej_odpowiedzi }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

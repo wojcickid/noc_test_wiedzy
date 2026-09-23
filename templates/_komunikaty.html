@@ -1,0 +1,9 @@
+{% with komunikaty = get_flashed_messages() %}
+    {% if komunikaty %}
+        <ul class="bledy">
+            {% for komunikat in komunikaty %}
+            <li>{{ komunikat }}</li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+{% endwith %}

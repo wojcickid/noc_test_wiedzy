@@ -1,27 +1,12 @@
-<!DOCTYPE html>
-<html lang="pl">
-<head>
-    <meta charset="UTF-8">
-    <title>Panel administracyjny — logowanie</title>
-    <link rel="shortcut icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
-<body class="admin">
-    <h1>Panel administracyjny</h1>
-    {% with komunikaty = get_flashed_messages() %}
-        {% if komunikaty %}
-            <ul class="bledy">
-                {% for komunikat in komunikaty %}
-                <li>{{ komunikat }}</li>
-                {% endfor %}
-            </ul>
-        {% endif %}
-    {% endwith %}
-    <form action="{{ url_for('admin_login', nastepny=request.args.get('nastepny')) }}" method="post">
-        <label for="haslo">Hasło administratora:</label>
-        <input type="password" id="haslo" name="haslo" required autocomplete="current-password">
-        <button type="submit">Zaloguj</button>
-    </form>
-    {% include "stopka.html" %}
-</body>
-</html>
+{% set klasa_body = "admin" %}
+{% extends "base.html" %}
+{% block tytul %}Panel administracyjny — logowanie{% endblock %}
+{% block naglowek %}Panel administracyjny{% endblock %}
+{% block tresc %}
+{% include "_komunikaty.html" %}
+<form action="{{ url_for('admin_login', nastepny=request.args.get('nastepny')) }}" method="post">
+    <label for="haslo">Hasło administratora:</label>
+    <input type="password" id="haslo" name="haslo" required autocomplete="current-password">
+    <button type="submit">Zaloguj</button>
+</form>
+{% endblock %}
