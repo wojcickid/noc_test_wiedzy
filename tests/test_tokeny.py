@@ -34,8 +34,8 @@ def test_tokeny_generowane_w_partii_sa_unikalne(klient, test_z_pytaniami):
 
 
 def test_dwa_testy_moga_miec_wspolne_tokeny_bez_kolizji(klient):
-    test_id_1, _, _ = db.importuj_test_z_dataframe("Test 1", PYTANIA_TESTOWE.copy(), liczba_pytan=3)
-    test_id_2, _, _ = db.importuj_test_z_dataframe("Test 2", PYTANIA_TESTOWE.copy(), liczba_pytan=3)
+    test_id_1, _, _ = db.importuj_pytania("Test 1", PYTANIA_TESTOWE.copy(), liczba_pytan=3)
+    test_id_2, _, _ = db.importuj_pytania("Test 2", PYTANIA_TESTOWE.copy(), liczba_pytan=3)
 
     tokeny_1 = {w["token"] for w in db.wygeneruj_tokeny(test_id_1, 30, dlugosc=4)}
     tokeny_2 = {w["token"] for w in db.wygeneruj_tokeny(test_id_2, 30, dlugosc=4)}

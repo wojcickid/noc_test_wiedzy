@@ -8,7 +8,6 @@ w PLAN_POPRAWEK.md). Sama baza danych jest w pełni izolowana per test.
 import sys
 from pathlib import Path
 
-import pandas as pd
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -17,13 +16,11 @@ import db
 import test_wiedzy_app as app_module
 
 # Mały bank pytań testowych — wszystkie odpowiedzi to "B", żeby łatwo liczyć wynik.
-PYTANIA_TESTOWE = pd.DataFrame(
-    [
-        {"tresc_pytania": "1+1=?", "opcja_a": "1", "opcja_b": "2", "opcja_c": "3", "opcja_d": "4", "odpowiedz": "B"},
-        {"tresc_pytania": "2+2=?", "opcja_a": "3", "opcja_b": "4", "opcja_c": "5", "opcja_d": "6", "odpowiedz": "B"},
-        {"tresc_pytania": "3+3=?", "opcja_a": "5", "opcja_b": "6", "opcja_c": "7", "opcja_d": "8", "odpowiedz": "B"},
-    ]
-)
+PYTANIA_TESTOWE = [
+    {"tresc_pytania": "1+1=?", "opcja_a": "1", "opcja_b": "2", "opcja_c": "3", "opcja_d": "4", "odpowiedz": "B"},
+    {"tresc_pytania": "2+2=?", "opcja_a": "3", "opcja_b": "4", "opcja_c": "5", "opcja_d": "6", "odpowiedz": "B"},
+    {"tresc_pytania": "3+3=?", "opcja_a": "5", "opcja_b": "6", "opcja_c": "7", "opcja_d": "8", "odpowiedz": "B"},
+]
 
 
 @pytest.fixture
@@ -46,7 +43,7 @@ def haslo_admina():
 @pytest.fixture
 def test_z_pytaniami(klient):
     """Tworzy test z 3 pytaniami testowymi (liczba_pytan=3) i zwraca jego id."""
-    test_id, _, _ = db.importuj_test_z_dataframe("Test testowy", PYTANIA_TESTOWE.copy(), liczba_pytan=3)
+    test_id, _, _ = db.importuj_pytania("Test testowy", PYTANIA_TESTOWE.copy(), liczba_pytan=3)
     return test_id
 
 

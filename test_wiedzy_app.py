@@ -1,3 +1,5 @@
+import base64
+import binascii
 import io
 import json
 import os
@@ -5,17 +7,18 @@ import secrets
 from datetime import datetime
 from functools import wraps
 
-import pandas as pd
+import openpyxl
 from flask import Flask, abort, flash, redirect, render_template, request, send_file, session, url_for
 
 from db import (
     BladImportu,
     baza,
-    importuj_test_z_dataframe,
+    importuj_pytania,
     inicjalizuj,
     losowy_kod,
     przypisz_token,
     resetuj_token,
+    wczytaj_i_zwaliduj_plik_pytan,
     wygeneruj_tokeny,
 )
 
@@ -24,20 +27,23 @@ SECRET_KEY_FILE = os.path.join(BASE_DIR, ".flask_secret_key")
 ADMIN_HASLO_FILE = os.path.join(BASE_DIR, ".admin_haslo")
 
 # Przykładowy zestaw pytań do jednoklikowego wgrania w panelu (/admin/import/przyklad)
-PRZYKLADOWE_PYTANIA = pd.DataFrame(
-    [
-        {"tresc_pytania": "Jaka jest stolica Polski?", "opcja_a": "Kraków", "opcja_b": "Warszawa",
-         "opcja_c": "Wrocław", "opcja_d": "Poznań", "odpowiedz": "B"},
-        {"tresc_pytania": "Ile kontynentów liczy Ziemia?", "opcja_a": "5", "opcja_b": "6",
-         "opcja_c": "7", "opcja_d": "8", "odpowiedz": "C"},
-        {"tresc_pytania": "Ile wynosi liczba Pi w przybliżeniu do dwóch miejsc po przecinku?",
-         "opcja_a": "3,12", "opcja_b": "3,14", "opcja_c": "3,16", "opcja_d": "3,18", "odpowiedz": "B"},
-        {"tresc_pytania": "W którym roku zakończyła się II wojna światowa?", "opcja_a": "1943",
-         "opcja_b": "1944", "opcja_c": "1945", "opcja_d": "1946", "odpowiedz": "C"},
-        {"tresc_pytania": "Jaki gaz jest najbardziej rozpowszechniony w atmosferze Ziemi?",
-         "opcja_a": "Tlen", "opcja_b": "Azot", "opcja_c": "Dwutlenek węgla", "opcja_d": "Wodór", "odpowiedz": "B"},
-    ]
-)
+PRZYKLADOWE_PYTANIA = [
+    {"tresc_pytania": "Jaka jest stolica Polski?", "opcja_a": "Kraków", "opcja_b": "Warszawa",
+     "opcja_c": "Wrocław", "opcja_d": "Poznań", "odpowiedz": "B",
+     "wyjasnienie": "Warszawa jest stolicą Polski od 1596 roku."},
+    {"tresc_pytania": "Ile kontynentów liczy Ziemia?", "opcja_a": "5", "opcja_b": "6",
+     "opcja_c": "7", "opcja_d": "8", "odpowiedz": "C",
+     "wyjasnienie": "Powszechnie przyjmuje się podział na 7 kontynentów."},
+    {"tresc_pytania": "Ile wynosi liczba Pi w przybliżeniu do dwóch miejsc po przecinku?",
+     "opcja_a": "3,12", "opcja_b": "3,14", "opcja_c": "3,16", "opcja_d": "3,18", "odpowiedz": "B",
+     "wyjasnienie": "Liczba Pi to w przybliżeniu 3,14159…"},
+    {"tresc_pytania": "W którym roku zakończyła się II wojna światowa?", "opcja_a": "1943",
+     "opcja_b": "1944", "opcja_c": "1945", "opcja_d": "1946", "odpowiedz": "C",
+     "wyjasnienie": "II wojna światowa zakończyła się w 1945 roku."},
+    {"tresc_pytania": "Jaki gaz jest najbardziej rozpowszechniony w atmosferze Ziemi?",
+     "opcja_a": "Tlen", "opcja_b": "Azot", "opcja_c": "Dwutlenek węgla", "opcja_d": "Wodór", "odpowiedz": "B",
+     "wyjasnienie": "Azot stanowi ok. 78% atmosfery ziemskiej."},
+]
 
 
 def wczytaj_lub_utworz_sekret():
@@ -399,27 +405,59 @@ def admin_import():
             flash("Liczba losowanych pytań musi być dodatnia.", "blad")
             return redirect(url_for("admin_import"))
 
-        try:
-            df = pd.read_excel(plik)
-        except Exception:
-            flash("Nie udało się odczytać pliku — sprawdź, czy to poprawny plik .xlsx.", "blad")
-            return redirect(url_for("admin_import"))
-
-        try:
-            test_id, liczba, liczba_pytan_ustawiona = importuj_test_z_dataframe(nazwa_testu, df, liczba_pytan)
-        except BladImportu as e:
-            flash(str(e), "blad")
-            return redirect(url_for("admin_import"))
-
-        if liczba_pytan_ustawiona < liczba_pytan:
-            flash(
-                f"Uwaga: plik ma tylko {liczba} pytań, więc losowanie ustawiono na "
-                f"{liczba_pytan_ustawiona} (zamiast żądanych {liczba_pytan}).",
-                "info",
-            )
-        flash(f"Zaimportowano {liczba} pytań jako test '{nazwa_testu}' (losowanie: {liczba_pytan_ustawiona} na podejście).", "ok")
-        return redirect(url_for("admin_test", test_id=test_id))
+        dane_pliku = plik.read()
+        pytania, bledy = wczytaj_i_zwaliduj_plik_pytan(dane_pliku)
+        return render_template(
+            "admin_import_podglad.html",
+            nazwa_testu=nazwa_testu,
+            liczba_pytan=liczba_pytan,
+            pytania=pytania,
+            bledy=bledy,
+            plik_base64=base64.b64encode(dane_pliku).decode("ascii"),
+        )
     return render_template("admin_import.html")
+
+
+@app.route("/admin/import/zatwierdz", methods=["POST"])
+@wymaga_admina
+@csrf_chroniony
+def admin_import_zatwierdz():
+    """Drugi krok importu (L5) — dane pliku wracają zakodowane w ukrytym polu z
+    ekranu podglądu i są walidowane ponownie (odporne na spreparowany
+    formularz), dopiero potem trafiają do bazy."""
+    nazwa_testu = (request.form.get("nazwa_testu") or "").strip()
+    try:
+        liczba_pytan = int(request.form.get("liczba_pytan", "20"))
+    except ValueError:
+        liczba_pytan = 20
+    try:
+        dane_pliku = base64.b64decode(request.form.get("plik_base64", ""), validate=True)
+    except (binascii.Error, ValueError):
+        flash("Nie udało się odczytać przesłanego pliku — spróbuj zaimportować ponownie.", "blad")
+        return redirect(url_for("admin_import"))
+
+    pytania, bledy = wczytaj_i_zwaliduj_plik_pytan(dane_pliku)
+    if bledy:
+        flash("Plik zawiera błędy — popraw je i wgraj plik ponownie.", "blad")
+        return redirect(url_for("admin_import"))
+    if not nazwa_testu:
+        flash("Podaj nazwę testu.", "blad")
+        return redirect(url_for("admin_import"))
+
+    try:
+        test_id, liczba, liczba_pytan_ustawiona = importuj_pytania(nazwa_testu, pytania, liczba_pytan)
+    except BladImportu as e:
+        flash(str(e), "blad")
+        return redirect(url_for("admin_import"))
+
+    if liczba_pytan_ustawiona < liczba_pytan:
+        flash(
+            f"Uwaga: plik ma tylko {liczba} pytań, więc losowanie ustawiono na "
+            f"{liczba_pytan_ustawiona} (zamiast żądanych {liczba_pytan}).",
+            "info",
+        )
+    flash(f"Zaimportowano {liczba} pytań jako test '{nazwa_testu}' (losowanie: {liczba_pytan_ustawiona} na podejście).", "ok")
+    return redirect(url_for("admin_test", test_id=test_id))
 
 
 @app.route("/admin/import/przyklad", methods=["POST"])
@@ -433,7 +471,7 @@ def admin_import_przyklad():
             licznik += 1
             nazwa_testu = f"Przykładowy test {licznik}"
 
-    test_id, liczba, liczba_pytan = importuj_test_z_dataframe(nazwa_testu, PRZYKLADOWE_PYTANIA.copy())
+    test_id, liczba, liczba_pytan = importuj_pytania(nazwa_testu, PRZYKLADOWE_PYTANIA.copy())
     flash(f"Wgrano przykładowy test '{nazwa_testu}' ({liczba} pytań).", "ok")
     return redirect(url_for("admin_test", test_id=test_id))
 
@@ -441,16 +479,18 @@ def admin_import_przyklad():
 @app.route("/admin/szablon-pytan.xlsx")
 @wymaga_admina
 def admin_szablon():
-    df = pd.DataFrame(
-        [
-            {"tresc_pytania": "Przykładowe pytanie 1?", "opcja_a": "Odpowiedź A", "opcja_b": "Odpowiedź B",
-             "opcja_c": "Odpowiedź C", "opcja_d": "Odpowiedź D", "odpowiedz": "A"},
-            {"tresc_pytania": "Przykładowe pytanie 2?", "opcja_a": "Odpowiedź A", "opcja_b": "Odpowiedź B",
-             "opcja_c": "Odpowiedź C", "opcja_d": "Odpowiedź D", "odpowiedz": "C"},
-        ]
-    )
+    skoroszyt = openpyxl.Workbook()
+    arkusz = skoroszyt.active
+    arkusz.append(["tresc_pytania", "opcja_a", "opcja_b", "opcja_c", "opcja_d", "odpowiedz", "wyjasnienie"])
+    arkusz.append([
+        "Przykładowe pytanie 1?", "Odpowiedź A", "Odpowiedź B", "Odpowiedź C", "Odpowiedź D", "A",
+        "Kolumna wyjasnienie jest opcjonalna — można ją usunąć.",
+    ])
+    arkusz.append([
+        "Przykładowe pytanie 2?", "Odpowiedź A", "Odpowiedź B", "Odpowiedź C", "Odpowiedź D", "C", "",
+    ])
     bufor = io.BytesIO()
-    df.to_excel(bufor, index=False)
+    skoroszyt.save(bufor)
     bufor.seek(0)
     return send_file(
         bufor,

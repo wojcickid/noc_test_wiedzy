@@ -2,8 +2,11 @@
 
 import io
 
+import openpyxl
+
 import db
 from conftest import pobierz_csrf_token, zaloguj_admina
+from pomocnicze import wyslij_import, wyslij_import_podglad
 
 
 def test_logowanie_zlym_haslem_pokazuje_blad(klient):
@@ -28,28 +31,11 @@ def test_wylogowanie_odbiera_dostep(klient, haslo_admina):
     assert "Hasło administratora:".encode("utf-8") in odpowiedz.data
 
 
-def _wyslij_import(klient, nazwa_testu, df, liczba_pytan=20):
-    bufor = io.BytesIO()
-    df.to_excel(bufor, index=False)
-    bufor.seek(0)
-    return klient.post(
-        "/admin/import",
-        data={
-            "nazwa_testu": nazwa_testu,
-            "plik": (bufor, "pytania.xlsx"),
-            "liczba_pytan": str(liczba_pytan),
-            "csrf_token": pobierz_csrf_token(klient),
-        },
-        content_type="multipart/form-data",
-        follow_redirects=True,
-    )
-
-
 def test_import_pustej_nazwy_testu_pokazuje_blad(klient, haslo_admina):
     from conftest import PYTANIA_TESTOWE
 
     zaloguj_admina(klient, haslo_admina)
-    odpowiedz = _wyslij_import(klient, "", PYTANIA_TESTOWE)
+    odpowiedz = wyslij_import_podglad(klient, "", PYTANIA_TESTOWE)
     assert "Podaj nazwę testu.".encode("utf-8") in odpowiedz.data
 
 
@@ -57,17 +43,16 @@ def test_import_duplikatu_nazwy_pokazuje_blad(klient, haslo_admina):
     from conftest import PYTANIA_TESTOWE
 
     zaloguj_admina(klient, haslo_admina)
-    _wyslij_import(klient, "Test A", PYTANIA_TESTOWE)
-    odpowiedz = _wyslij_import(klient, "Test A", PYTANIA_TESTOWE)
+    wyslij_import(klient, "Test A", PYTANIA_TESTOWE)
+    odpowiedz = wyslij_import(klient, "Test A", PYTANIA_TESTOWE)
     assert "już istnieje".encode("utf-8") in odpowiedz.data
 
 
 def test_import_pliku_z_brakujacymi_kolumnami_pokazuje_blad(klient, haslo_admina):
-    import pandas as pd
-
     zaloguj_admina(klient, haslo_admina)
-    zly_df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
-    odpowiedz = _wyslij_import(klient, "Zly test", zly_df)
+    odpowiedz = wyslij_import_podglad(
+        klient, "Zly test", [{"a": 1, "b": 3}, {"a": 2, "b": 4}], kolumny=["a", "b"]
+    )
     assert "brakuje kolumn".encode("utf-8") in odpowiedz.data
 
 
@@ -76,7 +61,7 @@ def test_import_przycina_liczbe_pytan_do_dostepnej_w_pliku(klient, haslo_admina)
 
     zaloguj_admina(klient, haslo_admina)
     # PYTANIA_TESTOWE ma 3 wiersze, prosimy o 20
-    odpowiedz = _wyslij_import(klient, "Test przyciety", PYTANIA_TESTOWE, liczba_pytan=20)
+    odpowiedz = wyslij_import(klient, "Test przyciety", PYTANIA_TESTOWE, liczba_pytan=20)
     assert "Uwaga: plik ma tylko".encode("utf-8") in odpowiedz.data
     assert b"losowanie: 3 na podej" in odpowiedz.data
 
@@ -92,14 +77,13 @@ def test_przyklad_dziala_i_nadaje_unikalne_nazwy_przy_powtorzeniach(klient, hasl
 
 
 def test_szablon_do_pobrania_ma_wlasciwe_kolumny(klient, haslo_admina):
-    import pandas as pd
-
     zaloguj_admina(klient, haslo_admina)
     odpowiedz = klient.get("/admin/szablon-pytan.xlsx")
     assert odpowiedz.status_code == 200
-    df = pd.read_excel(io.BytesIO(odpowiedz.data))
+    skoroszyt = openpyxl.load_workbook(io.BytesIO(odpowiedz.data))
+    naglowki = {str(h).strip().lower() for h in next(skoroszyt.active.iter_rows(values_only=True))}
     oczekiwane = {"tresc_pytania", "opcja_a", "opcja_b", "opcja_c", "opcja_d", "odpowiedz"}
-    assert oczekiwane.issubset(set(df.columns))
+    assert oczekiwane.issubset(naglowki)
 
 
 def test_generowanie_tokenow_anonimowych(klient, haslo_admina, test_z_pytaniami):

@@ -1,0 +1,67 @@
+{% set klasa_body = "admin" %}
+{% extends "base.html" %}
+{% block tytul %}Podgląd importu — panel administracyjny{% endblock %}
+{% block nav %}
+<nav class="admin-nav">
+    <a href="{{ url_for('admin_panel') }}">← Panel</a>
+    <form action="{{ url_for('admin_logout') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="wyloguj">Wyloguj</button>
+    </form>
+</nav>
+{% endblock %}
+{% block naglowek %}Podgląd importu — {{ nazwa_testu }}{% endblock %}
+{% block tresc %}
+{% include "_komunikaty.html" %}
+
+{% if bledy %}
+<p><strong>Wczytano {{ pytania|length }} pytań, {{ bledy|length }} z błędami — popraw plik i wgraj go ponownie.</strong></p>
+<ul class="bledy-importu">
+    {% for blad in bledy %}
+    <li>{{ blad }}</li>
+    {% endfor %}
+</ul>
+{% else %}
+<p><strong>Wczytano {{ pytania|length }} pytań bez błędów.</strong> Sprawdź podgląd poniżej i zatwierdź import.</p>
+<form action="{{ url_for('admin_import_zatwierdz') }}" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="nazwa_testu" value="{{ nazwa_testu }}">
+    <input type="hidden" name="liczba_pytan" value="{{ liczba_pytan }}">
+    <input type="hidden" name="plik_base64" value="{{ plik_base64 }}">
+    <button type="submit">Zatwierdź import</button>
+</form>
+{% endif %}
+
+{% if pytania %}
+<table class="szczegoly">
+    <thead>
+        <tr>
+            <th>#</th>
+            <th>Treść pytania</th>
+            <th>A</th>
+            <th>B</th>
+            <th>C</th>
+            <th>D</th>
+            <th>Odpowiedź</th>
+            <th>Wyjaśnienie</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for pytanie in pytania %}
+        <tr>
+            <td>{{ loop.index }}</td>
+            <td>{{ pytanie.tresc_pytania }}</td>
+            <td>{{ pytanie.opcja_a }}</td>
+            <td>{{ pytanie.opcja_b }}</td>
+            <td>{{ pytanie.opcja_c }}</td>
+            <td>{{ pytanie.opcja_d }}</td>
+            <td>{{ pytanie.odpowiedz }}</td>
+            <td>{{ pytanie.wyjasnienie or '—' }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+<a class="btn" href="{{ url_for('admin_import') }}">Wybierz inny plik</a>
+{% endblock %}

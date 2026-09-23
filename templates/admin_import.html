@@ -5,6 +5,7 @@
 <nav class="admin-nav">
     <a href="{{ url_for('admin_panel') }}">← Panel</a>
     <form action="{{ url_for('admin_logout') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="wyloguj">Wyloguj</button>
     </form>
 </nav>
@@ -22,7 +23,8 @@
     <label for="nazwa_testu">Nazwa testu:</label>
     <input type="text" id="nazwa_testu" name="nazwa_testu" required>
 
-    <label for="plik">Plik .xlsx (kolumny: tresc_pytania, opcja_a, opcja_b, opcja_c, opcja_d, odpowiedz):</label>
+    <label for="plik">Plik .xlsx (kolumny: tresc_pytania, opcja_a, opcja_b, opcja_c, opcja_d, odpowiedz;
+        opcjonalnie wyjasnienie):</label>
     <input type="file" id="plik" name="plik" accept=".xlsx" required>
 
     <label for="liczba_pytan">Ile pytań losować przy każdym podejściu:</label>

@@ -1,5 +1,6 @@
 """Wspólny dostęp do bazy SQLite używany przez aplikację i skrypty pomocnicze."""
 
+import io
 import json
 import os
 import secrets
@@ -7,6 +8,8 @@ import sqlite3
 import string
 from contextlib import contextmanager
 from datetime import datetime
+
+import openpyxl
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PLIK = os.path.join(BASE_DIR, "baza.db")
@@ -16,6 +19,10 @@ DB_PLIK = os.path.join(BASE_DIR, "baza.db")
 ALFABET_KODOW = "".join(sorted(set(string.ascii_uppercase + string.digits) - set("0O1IL")))
 
 WYMAGANE_KOLUMNY_PYTAN = ["tresc_pytania", "opcja_a", "opcja_b", "opcja_c", "opcja_d", "odpowiedz"]
+# Opcjonalna — treść pokazywana przy wyniku uczestnika, wyjaśniająca poprawną
+# odpowiedź (E4). Plik bez tej kolumny importuje się normalnie.
+KOLUMNA_WYJASNIENIE = "wyjasnienie"
+ODPOWIEDZI_DOZWOLONE = {"A", "B", "C", "D"}
 
 
 class BladImportu(Exception):
@@ -37,7 +44,8 @@ CREATE TABLE IF NOT EXISTS pytania (
     opcja_b TEXT NOT NULL,
     opcja_c TEXT NOT NULL,
     opcja_d TEXT NOT NULL,
-    odpowiedz TEXT NOT NULL
+    odpowiedz TEXT NOT NULL,
+    wyjasnienie TEXT
 );
 
 CREATE TABLE IF NOT EXISTS tokeny (
@@ -104,6 +112,7 @@ SELECT
         WHEN 'A' THEN p.opcja_a WHEN 'B' THEN p.opcja_b
         WHEN 'C' THEN p.opcja_c WHEN 'D' THEN p.opcja_d
     END AS tresc_poprawnej_odpowiedzi,
+    p.wyjasnienie AS wyjasnienie,
     ou.data_wyslania AS data_wyslania
 FROM odpowiedzi_uzytkownika ou
 JOIN pytania p ON p.id = ou.pytanie_id
@@ -154,6 +163,10 @@ def _migruj_tabele(conn):
     kolumny_testy = {w["name"] for w in conn.execute("PRAGMA table_info(testy)").fetchall()}
     if "liczba_pytan_do_losowania" not in kolumny_testy:
         conn.execute("ALTER TABLE testy ADD COLUMN liczba_pytan_do_losowania INTEGER NOT NULL DEFAULT 20")
+
+    kolumny_pytania = {w["name"] for w in conn.execute("PRAGMA table_info(pytania)").fetchall()}
+    if "wyjasnienie" not in kolumny_pytania:
+        conn.execute("ALTER TABLE pytania ADD COLUMN wyjasnienie TEXT")
 
     _odtworz_historyczne_podejscia(conn)
 
@@ -237,18 +250,97 @@ def losowy_kod(dlugosc=8):
     return "".join(secrets.choice(ALFABET_KODOW) for _ in range(dlugosc))
 
 
-def importuj_test_z_dataframe(nazwa_testu, df, liczba_pytan=20):
-    """Tworzy nowy test i wczytuje do niego pytania z pandas.DataFrame
-    (kolumny: tresc_pytania, opcja_a..d, odpowiedz). `liczba_pytan` to ile
-    pytań losować przy każdym podejściu — przycinane do liczby pytań w pliku.
-    Zwraca (test_id, liczba_pytan_w_pliku, faktyczna_liczba_do_losowania)."""
-    brakujace = [k for k in WYMAGANE_KOLUMNY_PYTAN if k not in df.columns]
+def _komorka_na_tekst(wartosc):
+    """Zamienia wartość komórki openpyxl na tekst: pusta komórka (`None`) daje
+    `""` zamiast napisu `"nan"`, a liczba całkowita zapisana jako float (np.
+    `5.0`, bo kolumna miała gdzieś pustą komórkę) traci zbędne `.0` (B5)."""
+    if wartosc is None:
+        return ""
+    if isinstance(wartosc, float) and wartosc.is_integer():
+        return str(int(wartosc))
+    return str(wartosc).strip()
+
+
+def wczytaj_i_zwaliduj_plik_pytan(dane_pliku):
+    """Parsuje plik .xlsx z pytaniami i waliduje go wiersz po wierszu (B6).
+    Nagłówki są normalizowane (`strip().lower()`), więc `Tresc_pytania` albo
+    spacja na końcu nazwy kolumny nie psują importu. Puste wiersze (np. odstęp
+    na końcu arkusza) są pomijane bez błędu. Zwraca `(pytania, bledy)` —
+    `pytania` to lista słowników gotowych do zapisu (do podglądu przed
+    zatwierdzeniem, L5), `bledy` to lista czytelnych komunikatów, po jednym na
+    problem. Niepusta lista `bledy` oznacza, że pliku nie da się zaimportować
+    w całości — cały plik jest wtedy odrzucany (decyzja z Etapu 3)."""
+    try:
+        skoroszyt = openpyxl.load_workbook(filename=io.BytesIO(dane_pliku), read_only=True, data_only=True)
+    except Exception:
+        return [], ["Nie udało się odczytać pliku — sprawdź, czy to poprawny plik .xlsx."]
+
+    arkusz = skoroszyt.active
+    wiersze = arkusz.iter_rows(values_only=True)
+    try:
+        naglowki_surowe = next(wiersze)
+    except StopIteration:
+        return [], ["Plik jest pusty."]
+
+    naglowki = [(str(h).strip().lower() if h is not None else "") for h in naglowki_surowe]
+    brakujace = [k for k in WYMAGANE_KOLUMNY_PYTAN if k not in naglowki]
     if brakujace:
-        raise BladImportu(f"W pliku brakuje kolumn: {', '.join(brakujace)}")
-    if len(df) == 0:
+        return [], [f"W pliku brakuje kolumn: {', '.join(brakujace)}"]
+
+    indeksy = {nazwa: naglowki.index(nazwa) for nazwa in WYMAGANE_KOLUMNY_PYTAN}
+    indeks_wyjasnienia = naglowki.index(KOLUMNA_WYJASNIENIE) if KOLUMNA_WYJASNIENIE in naglowki else None
+
+    pytania = []
+    bledy = []
+    for numer_wiersza, wiersz in enumerate(wiersze, start=2):
+        if wiersz is None or all(komorka is None for komorka in wiersz):
+            continue
+
+        wartosci = {
+            nazwa: (_komorka_na_tekst(wiersz[idx]) if idx < len(wiersz) else "")
+            for nazwa, idx in indeksy.items()
+        }
+        for nazwa in WYMAGANE_KOLUMNY_PYTAN:
+            if not wartosci[nazwa]:
+                bledy.append(f"wiersz {numer_wiersza}: puste pole '{nazwa}'")
+
+        odpowiedz = wartosci["odpowiedz"].strip().upper()
+        if wartosci["odpowiedz"] and odpowiedz not in ODPOWIEDZI_DOZWOLONE:
+            bledy.append(
+                f"wiersz {numer_wiersza}: nieprawidłowa odpowiedź '{wartosci['odpowiedz']}' (dozwolone: A, B, C, D)"
+            )
+
+        wyjasnienie = None
+        if indeks_wyjasnienia is not None and indeks_wyjasnienia < len(wiersz):
+            wyjasnienie = _komorka_na_tekst(wiersz[indeks_wyjasnienia]) or None
+
+        pytania.append(
+            {
+                "tresc_pytania": wartosci["tresc_pytania"],
+                "opcja_a": wartosci["opcja_a"],
+                "opcja_b": wartosci["opcja_b"],
+                "opcja_c": wartosci["opcja_c"],
+                "opcja_d": wartosci["opcja_d"],
+                "odpowiedz": odpowiedz,
+                "wyjasnienie": wyjasnienie,
+            }
+        )
+
+    if not pytania and not bledy:
+        bledy.append("Plik nie zawiera żadnych pytań.")
+
+    return pytania, bledy
+
+
+def importuj_pytania(nazwa_testu, pytania, liczba_pytan=20):
+    """Tworzy nowy test i wczytuje do niego już zwalidowane pytania (patrz
+    `wczytaj_i_zwaliduj_plik_pytan`). `liczba_pytan` to ile pytań losować przy
+    każdym podejściu — przycinane do liczby pytań w pliku. Zwraca
+    (test_id, liczba_pytan_w_pliku, faktyczna_liczba_do_losowania)."""
+    if not pytania:
         raise BladImportu("Plik nie zawiera żadnych pytań.")
 
-    liczba_pytan = max(1, min(int(liczba_pytan), len(df)))
+    liczba_pytan = max(1, min(int(liczba_pytan), len(pytania)))
 
     with baza() as conn:
         try:
@@ -262,24 +354,20 @@ def importuj_test_z_dataframe(nazwa_testu, df, liczba_pytan=20):
 
         conn.executemany(
             """
-            INSERT INTO pytania (test_id, tresc_pytania, opcja_a, opcja_b, opcja_c, opcja_d, odpowiedz)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO pytania (test_id, tresc_pytania, opcja_a, opcja_b, opcja_c, opcja_d, odpowiedz, wyjasnienie)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
                     test_id,
-                    str(wiersz["tresc_pytania"]),
-                    str(wiersz["opcja_a"]),
-                    str(wiersz["opcja_b"]),
-                    str(wiersz["opcja_c"]),
-                    str(wiersz["opcja_d"]),
-                    str(wiersz["odpowiedz"]).strip().upper(),
+                    p["tresc_pytania"], p["opcja_a"], p["opcja_b"], p["opcja_c"], p["opcja_d"],
+                    p["odpowiedz"], p.get("wyjasnienie"),
                 )
-                for _, wiersz in df.iterrows()
+                for p in pytania
             ],
         )
 
-    return test_id, len(df), liczba_pytan
+    return test_id, len(pytania), liczba_pytan
 
 
 def wygeneruj_tokeny(test_id, liczba, dlugosc=8, przypisania=None):

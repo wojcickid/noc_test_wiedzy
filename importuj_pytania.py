@@ -11,9 +11,7 @@ Użycie:
 
 import argparse
 
-import pandas as pd
-
-from db import BladImportu, importuj_test_z_dataframe, inicjalizuj
+from db import BladImportu, importuj_pytania, inicjalizuj, wczytaj_i_zwaliduj_plik_pytan
 
 
 def main():
@@ -28,12 +26,20 @@ def main():
 
     inicjalizuj()
     try:
-        df = pd.read_excel(args.plik_xlsx)
-    except Exception as e:
+        with open(args.plik_xlsx, "rb") as f:
+            dane_pliku = f.read()
+    except OSError as e:
         raise SystemExit(f"Nie udało się odczytać pliku '{args.plik_xlsx}': {e}")
 
+    pytania, bledy = wczytaj_i_zwaliduj_plik_pytan(dane_pliku)
+    if bledy:
+        print(f"Plik zawiera błędy ({len(bledy)}) — popraw je i spróbuj ponownie:")
+        for blad in bledy:
+            print(f"  - {blad}")
+        raise SystemExit(1)
+
     try:
-        test_id, liczba, liczba_pytan = importuj_test_z_dataframe(args.nazwa_testu, df, args.liczba_pytan)
+        test_id, liczba, liczba_pytan = importuj_pytania(args.nazwa_testu, pytania, args.liczba_pytan)
     except BladImportu as e:
         raise SystemExit(str(e))
 

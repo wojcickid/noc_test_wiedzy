@@ -114,8 +114,8 @@ def test_przypisz_z_nieliczbowym_test_id_nie_wywala_500(klient, haslo_admina, te
 
 def test_wyniki_testu_sa_poprawnie_przypisane_do_test_id(klient, haslo_admina):
     zaloguj_admina(klient, haslo_admina)
-    test_id_1, _, _ = db.importuj_test_z_dataframe("Quiz A", PYTANIA_TESTOWE.copy(), liczba_pytan=3)
-    test_id_2, _, _ = db.importuj_test_z_dataframe("Quiz B", PYTANIA_TESTOWE.copy(), liczba_pytan=3)
+    test_id_1, _, _ = db.importuj_pytania("Quiz A", PYTANIA_TESTOWE.copy(), liczba_pytan=3)
+    test_id_2, _, _ = db.importuj_pytania("Quiz B", PYTANIA_TESTOWE.copy(), liczba_pytan=3)
 
     (token_1,) = [w["token"] for w in db.wygeneruj_tokeny(test_id_1, 1, dlugosc=6)]
     (token_2,) = [w["token"] for w in db.wygeneruj_tokeny(test_id_2, 1, dlugosc=6)]

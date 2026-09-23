@@ -63,6 +63,10 @@ textarea {
 .komunikat-info {
     color: #555;
 }
+.bledy-importu {
+    color: #c0392b;
+    text-align: left;
+}
 button {
     background-color: #007BFF;
     color: white;

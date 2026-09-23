@@ -19,6 +19,7 @@
             <th>Pytanie</th>
             <th>Odpowiedź uczestnika</th>
             <th>Poprawna odpowiedź</th>
+            <th>Wyjaśnienie</th>
         </tr>
     </thead>
     <tbody>
@@ -27,6 +28,7 @@
             <td>{{ wiersz.tresc_pytania }}</td>
             <td>{{ wiersz.odpowiedz_uzytkownika }}) {{ wiersz.tresc_odpowiedzi_uzytkownika }}</td>
             <td>{{ wiersz.poprawna_odpowiedz }}) {{ wiersz.tresc_poprawnej_odpowiedzi }}</td>
+            <td>{{ wiersz.wyjasnienie or '—' }}</td>
         </tr>
         {% endfor %}
     </tbody>

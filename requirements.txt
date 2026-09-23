@@ -1,6 +1,8 @@
 # Wersje przypięte i przetestowane pod Python 3.11.9 (S5, Etap 0).
-# Żeby zaktualizować: `pip install --upgrade Flask pandas openpyxl waitress`
+# Żeby zaktualizować: `pip install --upgrade Flask openpyxl waitress`
 # w świeżym .venv, potem `pip freeze` i sprawdzić `pytest` przed wpisaniem tu.
+# pandas usunięty w Etapie 3 (S1) — służył tylko do read_excel/to_excel, a
+# ciągnął numpy/python-dateutil/six/tzdata (ok. 100 MB); samo openpyxl wystarcza.
 Flask==3.1.3
 Jinja2==3.1.6
 MarkupSafe==3.0.3
@@ -10,10 +12,5 @@ click==8.5.0
 colorama==0.4.6
 itsdangerous==2.2.0
 et_xmlfile==2.0.0
-numpy==2.4.6
 openpyxl==3.1.5
-pandas==3.0.6
-python-dateutil==2.9.0.post0
-six==1.17.0
-tzdata==2026.4
 waitress==3.0.2

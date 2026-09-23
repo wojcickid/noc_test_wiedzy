@@ -131,7 +131,7 @@ Aktualizuj tę tabelę na końcu każdej sesji.
 | 0 Przygotowanie | zrobione (czeka na akceptację) | `etap-0-testy-i-baza-html` | 2026-09-23 | S4, S5, UI2 — patrz sekcja 0.5 |
 | 1 Szybkie poprawki | zrobione (czeka na akceptację) | `etap-1-szybkie-poprawki` | 2026-09-23 | B2, B3/S3, B4, B7, B10, B11, B12, B14, B15, B16, B17, B18, B19, B20, UI1, UI3, UI4 — patrz sekcja 0.5 |
 | 2 Przebieg testu w bazie | zrobione (czeka na akceptację) | `etap-2-przebieg-testu-w-bazie` | 2026-09-23 | L1/S2, B1, B8, B9, B13, E13, L3, L2 (reset), UI8 (statusy) — patrz sekcja 0.5 |
-| 3 Import | do zrobienia | | | |
+| 3 Import | zrobione (czeka na akceptację) | `etap-3-import` | 2026-09-23 | S1, B5, B6, L5, E4 — patrz sekcja 0.5 |
 | 4 Kontrola nad testem | do zrobienia | | | |
 | 5 Eksporty i raporty | do zrobienia | | | |
 | 6 Maile | do zrobienia (zapytanie do IT: nie wysłane) | | | |
@@ -171,7 +171,17 @@ Dopisuj tu decyzje usera (z datą i etapem) oraz problemy spoza zakresu bieżąc
 - **UI8 — statusy tokenów:** kolumna „Status" w `/admin/testy/<id>/tokeny` pokazuje `wolny` / `w trakcie` / `ukończony` (z `LEFT JOIN podejscia`). Status „czas minął" pominięty — zależy od limitu czasu (F1), poza zakresem Etapu 2.
 - **Migracja historycznych danych (ostrożność przy migracji, jak zalecał plan):** `_odtworz_historyczne_podejscia()` w `db.py` — idempotentna, uruchamiana przy każdym starcie w ramach `_migruj_tabele`. Dla każdego tokenu z odpowiedziami, ale bez wiersza w `podejscia` (czyli odpowiedzi sprzed Etapu 2), odtwarza zakończone podejście na podstawie istniejących `odpowiedzi_uzytkownika`. **Zweryfikowane na żywej `baza.db`** (1 test, 7 tokenów, 10 odpowiedzi sprzed migracji) — po `db.inicjalizuj()` powstały 2 wiersze w `podejscia` (dla 2 tokenów z odpowiedziami), `zbiorcze_wyniki` pokazuje poprawne dotychczasowe wyniki (5/5 pytań, wynik 3/5 dla obu) — **żadne historyczne dane nie zniknęły.**
 
----
+**Etap 3 (2026-09-23):**
+
+- **Odpowiedzi na pytania z sekcji 0.3** (wszystkie zgodne z rekomendacją): błędne wiersze w pliku importu odrzucają **cały plik** (bez częściowego importu z pomijaniem złych wierszy); dodano ekran **podglądu przed zatwierdzeniem** — nic nie zapisuje się do bazy, dopóki admin nie kliknie „Zatwierdź import"; opcjonalna kolumna `wyjasnienie` (E4) dodana już teraz, razem z resztą importu.
+- **Dwuetapowy import (L5):** `POST /admin/import` parsuje i waliduje plik (bez zapisu do bazy) i renderuje `admin_import_podglad.html`; `POST /admin/import/zatwierdz` dopiero zapisuje. Dane pliku wracają między krokami zakodowane w ukrytym polu formularza (`plik_base64`) — bez plików tymczasowych na serwerze i bez rozdymania ciasteczka sesji. Krok zatwierdzenia **waliduje ponownie od zera** z tych bajtów, więc spreparowany/zmieniony `plik_base64` nie ominie walidacji nawet gdyby ktoś pominął ekran podglądu (pokryte testem `test_zatwierdzenie_ze_spreparowanym_plikiem_z_bledami_jest_odrzucane`). Zasada „cały plik albo nic": jeśli walidacja zwróci choć jeden błąd, żaden wiersz się nie zapisuje.
+- **S1 — usunięcie pandas:** import pliku czyta się teraz przez `openpyxl.load_workbook(..., read_only=True, data_only=True)` + `iter_rows(values_only=True)`, a generowanie szablonu przez `openpyxl.Workbook()`. Usunięto `pandas` i cztery transytywne zależności wyłącznie jego (`numpy`, `python-dateutil`, `six`, `tzdata`) z `requirements.txt` — potwierdzone przez `pip show`/`importlib.metadata`, że nic innego w projekcie ich nie używało.
+- **B5 — „nan"/„5.0":** naprawione u źródła przez czytanie komórka po komórce w openpyxl (bez wymuszania jednego typu na całą kolumnę, jak robił pandas). Nowa funkcja `db._komorka_na_tekst()`: `None` → `""`, float całkowity (np. `5.0`) → `"5"`, reszta → `str(...).strip()`.
+- **B6 — walidacja treści i nagłówków:** nagłówki normalizowane (`strip().lower()`), więc `Tresc_Pytania`, spacje na końcu czy inna wielkość liter nadal się dopasują. Każdy niepusty wiersz jest walidowany: puste wymagane pole → `wiersz N: puste pole 'nazwa'`, odpowiedź spoza A–D → `wiersz N: nieprawidłowa odpowiedź '...' (dozwolone: A, B, C, D)`. Całkiem puste wiersze (wszystkie komórki `None`) są pomijane, nie liczą się jako błąd.
+- **E4 — opcjonalna kolumna `wyjasnienie`:** wykrywana po obecności w nagłówkach; jeśli jest, trafia do nowej kolumny `pytania.wyjasnienie TEXT` (dodana przyrostową migracją, jak dotychczasowe kolumny) i jest pokazywana w podglądzie importu, na stronie `/sprawdz-wynik` uczestnika i w szczegółach tokenu admina (obie przez widok `arkusz_wynikow`).
+- **Migracja `wyjasnienie` zweryfikowana na żywej `baza.db`:** przed zmianą tabela `pytania` miała 5 wierszy; po `db.inicjalizuj()` kolumna doszła, a wszystkie 5 wierszy zostało bez zmian — zero utraty danych.
+- **Testy:** 61/61 przechodzi (50 z wcześniejszych etapów + 11 nowych w `tests/test_etap3_import.py`), w tym test bezpieczeństwa potwierdzający, że `/admin/import/zatwierdz` waliduje samodzielnie, a nie ufa spreparowanemu ukrytemu polu.
+
 
 ## Spis treści
 
